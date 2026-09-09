@@ -1,0 +1,6 @@
+# Chemin vers le clone local du dépôt carbonio-thunderbird-connector (GitHub)
+REPO_DIR=/home/julien/Developement/thunderbird/carbonio-thunderbird-connector
+
+# Chemin vers la racine "comm/" de ton checkout Mercurial (celle qui contient
+# mailnews/, mail/, etc. — PAS le dossier "source/" parent qui contient mozilla-central)
+COMM_DIR=/home/julien/Developement/thunderbird/source/comm
