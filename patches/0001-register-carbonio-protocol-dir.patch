@@ -1,0 +1,10 @@
+--- a/mailnews/protocols/moz.build
++++ b/mailnews/protocols/moz.build
+@@ -7,6 +7,7 @@
+ 
+ DIRS += [
+     "common",
++    "carbonio/src",
+     "exchange/public",
+     "exchange/src",
+ ]

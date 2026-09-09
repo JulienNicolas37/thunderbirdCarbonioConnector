@@ -1,0 +1,24 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+UNIFIED_SOURCES += [
+    "CarbonioIncomingServer.cpp",
+    "CarbonioListeners.cpp",
+]
+
+XPCOM_MANIFESTS += [
+    "components.conf",
+]
+
+# As with EWS: these IDL files don't describe a public API for other
+# components, but interfaces needed to interact with Rust - hence living
+# here rather than in a separate "public" directory.
+XPIDL_MODULE = "msgcarbonio"
+
+XPIDL_SOURCES += [
+    "ICarbonioClient.idl",
+    "ICarbonioIncomingServer.idl",
+]
+
+FINAL_LIBRARY = "mail"
