@@ -1,0 +1,8 @@
+# Config files with real credentials/paths — never commit these, only the
+# .example versions are meant to be shared.
+sync.conf
+docs/config.ini
+
+# Common editor/OS noise
+.DS_Store
+*.swp
