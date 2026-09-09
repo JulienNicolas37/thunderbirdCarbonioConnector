@@ -1,0 +1,274 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+//! JSON (de)serialization types for Carbonio's SOAP-over-JSON API
+//! (`urn:zimbraSoap`).
+//!
+//! Scope note: these types only cover what phase 1 (read-only mail sync)
+//! needs. Carbonio/Zimbra's SOAP responses carry many more fields (ACLs,
+//! retention policies, calendar/contact-specific attributes, etc.) which are
+//! simply ignored by `serde` (unknown fields are dropped by default) rather
+//! than modeled here. Extend as later phases need more data.
+//!
+//! Confirmed empirically (see `docs/carbonio-thunderbird-connecteur-phase1-specification.md`
+//! in the connector repo) against a real Carbonio instance:
+//!   - the auth token travels in `Header.context.authToken`, not as an HTTP
+//!     header or cookie;
+//!   - `GetFolderRequest`/an initial (token-less) `SyncRequest` return a
+//!     *nested* folder tree; a delta `SyncRequest` (with `token`) returns a
+//!     *flat* list of changed folders, each carrying its parent id in `l`;
+//!   - `SyncRequest` must be sent with `typed: 1`, otherwise `deleted` mixes
+//!     ids of every object type (folders, messages, tags, ...) with no way
+//!     to tell them apart.
+
+use serde::{Deserialize, Serialize};
+
+/// The full envelope wrapping every SOAP-over-JSON request/response.
+#[derive(Debug, Serialize)]
+pub(crate) struct Envelope<B> {
+    #[serde(rename = "Header")]
+    pub header: Header,
+    #[serde(rename = "Body")]
+    pub body: B,
+    #[serde(rename = "_jsns")]
+    pub jsns: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct Header {
+    pub context: Context,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct Context {
+    #[serde(rename = "_jsns")]
+    pub jsns: &'static str,
+    #[serde(rename = "authToken", skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+}
+
+/// Envelope shape for deserializing *any* response, before we know which
+/// request kind it corresponds to. Lets us check for `Fault` uniformly.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ResponseEnvelope<B> {
+    #[serde(rename = "Body")]
+    pub body: ResponseBody<B>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ResponseBody<B> {
+    #[serde(rename = "Fault")]
+    pub fault: Option<Fault>,
+    #[serde(flatten)]
+    pub content: Option<B>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Fault {
+    #[serde(rename = "Reason")]
+    pub reason: FaultReason,
+    #[serde(rename = "Detail")]
+    pub detail: Option<FaultDetail>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FaultReason {
+    #[serde(rename = "Text")]
+    pub text: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FaultDetail {
+    #[serde(rename = "Error")]
+    pub error: Option<FaultError>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FaultError {
+    #[serde(rename = "Code")]
+    pub code: Option<String>,
+}
+
+// --- AuthRequest / AuthResponse --------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AuthRequest {
+    #[serde(rename = "_jsns")]
+    pub jsns: &'static str,
+    #[serde(rename = "csrfTokenSecured")]
+    pub csrf_token_secured: bool,
+    #[serde(rename = "persistAuthTokenCookie")]
+    pub persist_auth_token_cookie: bool,
+    pub account: AuthAccount,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AuthAccount {
+    pub by: &'static str,
+    #[serde(rename = "_content")]
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AuthResponseBody {
+    #[serde(rename = "AuthResponse")]
+    pub auth_response: AuthResponse,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AuthResponse {
+    #[serde(rename = "authToken")]
+    pub auth_token: Vec<AuthToken>,
+    /// Token lifetime, in milliseconds, as returned by the server.
+    pub lifetime: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AuthToken {
+    #[serde(rename = "_content")]
+    pub content: String,
+}
+
+// --- SyncRequest / SyncResponse --------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SyncRequest {
+    #[serde(rename = "_jsns")]
+    pub jsns: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// Always sent as `Some(1)` by this client: without it, `deleted` mixes
+    /// ids of every object type with no way to tell them apart. See the
+    /// module-level doc comment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub typed: Option<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct SyncResponseBody {
+    #[serde(rename = "SyncResponse")]
+    pub sync_response: SyncResponse,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct SyncResponse {
+    /// New sync token to store and pass as `token` on the next call.
+    ///
+    /// Confirmed empirically: Carbonio does not consistently encode this as
+    /// either a JSON string or a JSON number across responses, so we accept
+    /// either and normalize to a `String`.
+    #[serde(deserialize_with = "deserialize_token", default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub folder: Vec<SyncFolder>,
+    #[serde(default)]
+    pub deleted: Vec<Deleted>,
+}
+
+fn deserialize_token<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum TokenValue {
+        Str(String),
+        Num(i64),
+    }
+
+    Ok(Option::<TokenValue>::deserialize(deserializer)?.map(|v| match v {
+        TokenValue::Str(s) => s,
+        TokenValue::Num(n) => n.to_string(),
+    }))
+}
+
+/// A folder as it appears in a `SyncResponse`.
+///
+/// Note the recursive `folder` field: this is only populated for an
+/// *initial* sync (no `token` sent), which returns a nested tree. A delta
+/// sync (with `token`) returns folders flat, with an empty `folder` here for
+/// each one — the caller is expected to flatten the initial-sync tree into
+/// the same flat shape before processing, so a single code path can handle
+/// both. See [`crate::client::sync_folder_hierarchy`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct SyncFolder {
+    pub id: String,
+    /// Absent for folders that no longer have a name in the payload — should
+    /// not normally happen for folders we care about, but guard against it
+    /// rather than panicking.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Parent folder id ("location"). Absent only for the account's
+    /// absolute root (id `11`), which has no parent.
+    #[serde(default)]
+    pub l: Option<String>,
+    /// Discriminates mail folders from calendars/contacts/tasks/etc.
+    /// Absent for some system folders (Inbox, Trash, ...) that are
+    /// nonetheless mail folders — do not treat an absent `view` as
+    /// "not mail" on its own. See the phase 1 spec doc for the current
+    /// filtering approach.
+    #[serde(default)]
+    pub view: Option<String>,
+    #[serde(default)]
+    pub folder: Vec<SyncFolder>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Deleted {
+    /// Comma-separated ids, present regardless of `typed`. Kept for
+    /// debugging/logging; prefer `folder` (below) to know which of these
+    /// ids are actually folders.
+    #[serde(default)]
+    pub ids: Option<String>,
+    /// Only present when the request was sent with `typed: 1`. Each entry's
+    /// `ids` is a comma-separated list of deleted folder ids.
+    #[serde(default)]
+    pub folder: Vec<IdsBlock>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IdsBlock {
+    pub ids: String,
+}
+
+impl IdsBlock {
+    /// Splits the comma-separated id list into individual ids.
+    pub fn split(&self) -> impl Iterator<Item = &str> {
+        self.ids.split(',').map(str::trim).filter(|s| !s.is_empty())
+    }
+}
+
+// --- GetMsgRequest / GetMsgResponse -----------------------------------------
+//
+// NOTE: unlike the auth and folder-sync types above, this section has *not*
+// been empirically validated yet (we only ran `carbonio_explorer.py folders`
+// and `sync`, never `message`, against a real server — see the phase 1 spec
+// doc). `MsgContent` is deliberately left as a raw `serde_json::Value` rather
+// than a typed struct, to avoid modeling a shape we haven't actually seen.
+// Replace with typed fields once validated the same way the sync types were.
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetMsgRequest {
+    #[serde(rename = "_jsns")]
+    pub jsns: &'static str,
+    pub m: GetMsgSpec,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetMsgSpec {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GetMsgResponseBody {
+    #[serde(rename = "GetMsgResponse")]
+    pub get_msg_response: GetMsgResponse,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GetMsgResponse {
+    /// Raw, unvalidated shape — see the module note above.
+    pub m: Vec<serde_json::Value>,
+}
