@@ -104,6 +104,18 @@ pub(crate) struct AuthRequest {
     pub password: String,
 }
 
+/// Wraps [`AuthRequest`] under the `"AuthRequest"` key expected as the
+/// direct child of `Body` - confirmed empirically to be required (without
+/// it, Carbonio responds with a `service.UNKNOWN_DOCUMENT` fault, having
+/// misidentified a nested field as the command name). Mirrors how
+/// [`AuthResponseBody`] already unwraps the equivalent `"AuthResponse"` key
+/// on the way back.
+#[derive(Debug, Serialize)]
+pub(crate) struct AuthRequestBody {
+    #[serde(rename = "AuthRequest")]
+    pub auth_request: AuthRequest,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct AuthAccount {
     pub by: &'static str,
@@ -144,6 +156,13 @@ pub(crate) struct SyncRequest {
     /// module-level doc comment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub typed: Option<u8>,
+}
+
+/// See [`AuthRequestBody`] for why this wrapping is needed.
+#[derive(Debug, Serialize)]
+pub(crate) struct SyncRequestBody {
+    #[serde(rename = "SyncRequest")]
+    pub sync_request: SyncRequest,
 }
 
 #[derive(Debug, Deserialize)]
@@ -255,6 +274,13 @@ pub(crate) struct GetMsgRequest {
     #[serde(rename = "_jsns")]
     pub jsns: &'static str,
     pub m: GetMsgSpec,
+}
+
+/// See [`AuthRequestBody`] for why this wrapping is needed.
+#[derive(Debug, Serialize)]
+pub(crate) struct GetMsgRequestBody {
+    #[serde(rename = "GetMsgRequest")]
+    pub get_msg_request: GetMsgRequest,
 }
 
 #[derive(Debug, Serialize)]

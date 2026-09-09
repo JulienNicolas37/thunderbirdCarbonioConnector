@@ -8,7 +8,7 @@
 
 use crate::error::{Error, Result};
 use crate::soap;
-use crate::types::{GetMsgRequest, GetMsgResponseBody, GetMsgSpec};
+use crate::types::{GetMsgRequest, GetMsgRequestBody, GetMsgResponseBody, GetMsgSpec};
 
 use super::CarbonioClient;
 
@@ -30,11 +30,13 @@ pub struct Message {
 pub(super) async fn get_message(client: &CarbonioClient, message_id: &str) -> Result<Message> {
     let token = client.auth_token().await?;
 
-    let request = GetMsgRequest {
-        jsns: "urn:zimbraMail",
-        m: GetMsgSpec {
-            id: message_id.to_string(),
-            raw: 1,
+    let request = GetMsgRequestBody {
+        get_msg_request: GetMsgRequest {
+            jsns: "urn:zimbraMail",
+            m: GetMsgSpec {
+                id: message_id.to_string(),
+                raw: 1,
+            },
         },
     };
 

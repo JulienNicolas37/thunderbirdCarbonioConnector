@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
 use crate::soap;
-use crate::types::{AuthAccount, AuthRequest, AuthResponseBody};
+use crate::types::{AuthAccount, AuthRequest, AuthRequestBody, AuthResponseBody};
 
 use super::{CarbonioClient, Session};
 
@@ -50,15 +50,17 @@ async fn login(client: &CarbonioClient) -> Result<String> {
         }
     }
 
-    let request = AuthRequest {
-        jsns: "urn:zimbraAccount",
-        csrf_token_secured: true,
-        persist_auth_token_cookie: true,
-        account: AuthAccount {
-            by: "name",
-            content: client.username.clone(),
+    let request = AuthRequestBody {
+        auth_request: AuthRequest {
+            jsns: "urn:zimbraAccount",
+            csrf_token_secured: true,
+            persist_auth_token_cookie: true,
+            account: AuthAccount {
+                by: "name",
+                content: client.username.clone(),
+            },
+            password: client.password.clone(),
         },
-        password: client.password.clone(),
     };
 
     // No auth token to send for the auth request itself.

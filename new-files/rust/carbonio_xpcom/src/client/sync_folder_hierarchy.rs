@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::soap;
-use crate::types::{SyncFolder, SyncRequest, SyncResponseBody};
+use crate::types::{SyncFolder, SyncRequest, SyncRequestBody, SyncResponseBody};
 
 use super::CarbonioClient;
 
@@ -66,10 +66,12 @@ pub(super) async fn sync_folder_hierarchy(
 ) -> Result<SyncResult> {
     let token = client.auth_token().await?;
 
-    let request = SyncRequest {
-        jsns: "urn:zimbraMail",
-        token: previous_sync_token,
-        typed: Some(1),
+    let request = SyncRequestBody {
+        sync_request: SyncRequest {
+            jsns: "urn:zimbraMail",
+            token: previous_sync_token,
+            typed: Some(1),
+        },
     };
 
     let response: SyncResponseBody =
