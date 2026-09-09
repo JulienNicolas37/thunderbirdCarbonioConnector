@@ -122,8 +122,10 @@ impl XpcomCarbonioBridge {
         // actually prompts the user and caches the result in the password
         // manager for next time.
         let mut password = nsString::new();
-        let prompt_string =
-            nsString::from(format!("Enter your Carbonio password for {}:", username.to_utf8()));
+        let prompt_string = nsString::from(&format!(
+            "Enter your Carbonio password for {}:",
+            username.to_utf8()
+        ));
         let prompt_title = nsString::from("Carbonio Account");
         unsafe {
             server.GetPasswordWithUI(&raw const *prompt_string, &raw const *prompt_title, &raw mut *password)
