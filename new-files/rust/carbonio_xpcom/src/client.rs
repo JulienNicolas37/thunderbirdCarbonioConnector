@@ -80,6 +80,18 @@ impl CarbonioClient {
         sync_folder_hierarchy::sync_folder_hierarchy(self, previous_sync_token).await
     }
 
+    /// Checks that the client's configuration allows authenticating against
+    /// the server (performs a login if there is no valid cached session).
+    pub async fn check_connectivity(&self) -> Result<()> {
+        self.auth_token().await?;
+        Ok(())
+    }
+
+    /// The server's SOAP endpoint URL, as given to [`CarbonioClient::new`].
+    pub fn endpoint(&self) -> &Url {
+        &self.endpoint
+    }
+
     /// Fetches a single message's raw RFC822 MIME source by id, along with
     /// the metadata needed to place it in the local store.
     ///
