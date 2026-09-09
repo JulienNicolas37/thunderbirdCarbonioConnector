@@ -115,8 +115,20 @@ impl XpcomCarbonioBridge {
         let mut username = nsCString::new();
         unsafe { server.GetUsername(&raw mut *username) }.to_result()?;
 
+        // `GetPassword` alone only returns whatever's already cached (empty
+        // in our case, since this account was set up by hand rather than
+        // through a wizard that would have prompted for one) - it never
+        // shows a dialog. `GetPasswordWithUI` is the scriptable method that
+        // actually prompts the user and caches the result in the password
+        // manager for next time.
         let mut password = nsString::new();
-        unsafe { server.GetPassword(&raw mut *password) }.to_result()?;
+        let prompt_string =
+            nsString::from(format!("Enter your Carbonio password for {}:", username.to_utf8()));
+        let prompt_title = nsString::from("Carbonio Account");
+        unsafe {
+            server.GetPasswordWithUI(&raw const *prompt_string, &raw const *prompt_title, &raw mut *password)
+        }
+        .to_result()?;
 
         let client = CarbonioClient::new(endpoint_url, username.to_string(), password.to_string());
 
