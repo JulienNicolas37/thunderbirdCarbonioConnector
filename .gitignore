@@ -2,6 +2,7 @@
 # .example versions are meant to be shared.
 sync.conf
 docs/config.ini
+config.ini
 
 # Common editor/OS noise
 .DS_Store
