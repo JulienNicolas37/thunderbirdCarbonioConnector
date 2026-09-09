@@ -242,12 +242,13 @@ impl IdsBlock {
 
 // --- GetMsgRequest / GetMsgResponse -----------------------------------------
 //
-// NOTE: unlike the auth and folder-sync types above, this section has *not*
-// been empirically validated yet (we only ran `carbonio_explorer.py folders`
-// and `sync`, never `message`, against a real server — see the phase 1 spec
-// doc). `MsgContent` is deliberately left as a raw `serde_json::Value` rather
-// than a typed struct, to avoid modeling a shape we haven't actually seen.
-// Replace with typed fields once validated the same way the sync types were.
+// Validated empirically against a real Carbonio instance (see the phase 1
+// spec doc): `GetMsgRequest` without `raw` returns Carbonio's *parsed*
+// representation (structured subject/participants/decoded body parts, no
+// raw MIME source). Sending `raw: 1` switches the response to the raw
+// RFC822 MIME source in `m[0].content._content`, which is what's needed to
+// write the message into Thunderbird's local store (the same way EWS/Graph
+// fetch raw content rather than a parsed view).
 
 #[derive(Debug, Serialize)]
 pub(crate) struct GetMsgRequest {
@@ -259,6 +260,8 @@ pub(crate) struct GetMsgRequest {
 #[derive(Debug, Serialize)]
 pub(crate) struct GetMsgSpec {
     pub id: String,
+    /// Always sent as `1` by this client: see the module note above.
+    pub raw: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,6 +272,20 @@ pub(crate) struct GetMsgResponseBody {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct GetMsgResponse {
-    /// Raw, unvalidated shape — see the module note above.
-    pub m: Vec<serde_json::Value>,
+    pub m: Vec<RawMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RawMessage {
+    pub id: String,
+    /// Parent folder id ("location"), same convention as [`SyncFolder::l`].
+    #[serde(default)]
+    pub l: Option<String>,
+    pub content: RawContent,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RawContent {
+    #[serde(rename = "_content")]
+    pub content: String,
 }

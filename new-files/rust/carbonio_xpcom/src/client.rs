@@ -17,6 +17,7 @@ mod authenticate;
 mod get_message;
 mod sync_folder_hierarchy;
 
+pub use get_message::Message;
 pub use sync_folder_hierarchy::{FolderChange, SyncResult};
 
 /// A cached, still-valid (as far as we know) authentication session.
@@ -79,12 +80,12 @@ impl CarbonioClient {
         sync_folder_hierarchy::sync_folder_hierarchy(self, previous_sync_token).await
     }
 
-    /// Fetches a single message by id.
+    /// Fetches a single message's raw RFC822 MIME source by id, along with
+    /// the metadata needed to place it in the local store.
     ///
-    /// UNVALIDATED (see `get_message.rs`): the exact response shape hasn't
-    /// been confirmed against a real server yet, unlike auth and folder
-    /// sync. Returns the raw decoded JSON for now.
-    pub async fn get_message(&self, message_id: &str) -> Result<serde_json::Value> {
+    /// Validated empirically against a real Carbonio instance — see
+    /// `get_message.rs` and the phase 1 spec doc.
+    pub async fn get_message(&self, message_id: &str) -> Result<get_message::Message> {
         get_message::get_message(self, message_id).await
     }
 }

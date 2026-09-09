@@ -77,8 +77,16 @@ const nsMsgAuthMethodValue NTLM = 6;
 - **Suppression définitive** : apparaît dans un tableau `deleted` séparé. **Sans `typed`**, c'est une liste plate d'IDs mélangeant tous types d'objets (`{"ids": "1229,704"}`) — inutilisable en l'état pour distinguer un dossier supprimé d'un message supprimé. **Avec `typed: 1`**, confirmé : `deleted` se décompose par type (`deleted.folder.ids` isole les IDs de dossiers), avec le champ `ids` générique conservé en plus pour compatibilité. **Conclusion : `typed: 1` est indispensable pour la phase 1**, à inclure systématiquement dans le `SyncRequest` du futur client Rust.
 - Le champ `token` de la réponse change de représentation JSON selon le contexte (entier ou chaîne) — à traiter comme une valeur opaque côté parsing, ne jamais supposer un type fixe.
 
-## 5. Statut
+## 5. Récupération de message (`GetMsgRequest`) — validée empiriquement
 
-Le contrat de synchronisation de la hiérarchie de dossiers est maintenant **validé empiriquement** sur les points suivants : authentification et transport du token, forme initiale vs delta, création/mise à jour/déplacement/suppression. Les inconnues restantes (refresh de token à expiration, comportement à grande échelle avec de nombreux dossiers) ne sont pas bloquantes pour un POC phase 1 et pourront être traitées au fil de l'implémentation.
+Sans paramètre supplémentaire, `GetMsgRequest` renvoie la représentation **parsée** par Carbonio (sujet, participants décomposés dans `e[]`, corps déjà décodé dans `mp[].content`) — pas le MIME brut dont Thunderbird a besoin pour son store local.
 
-Prêt à passer au scaffold du crate `carbonio_xpcom` et des fichiers C++ associés (validation explicite requise avant génération, comme convenu).
+**Confirmé empiriquement** : ajouter l'attribut `raw: 1` sur l'objet `m` de la requête fait basculer la réponse vers le contenu MIME brut complet (RFC822), disponible dans `m[0].content._content` — en-têtes complets (`Message-ID`, `Received`, `DKIM-Signature`...) et corps tel qu'envoyé sur le fil (avec son `Content-Transfer-Encoding` d'origine, ex: quoted-printable). C'est exactement la forme utilisée par EWS pour peupler le store local.
+
+Le champ `l` (dossier parent) reste présent dans la réponse même en mode `raw`, ce qui permet de savoir à quel dossier rattacher le message sans requête supplémentaire.
+
+## 6. Statut
+
+Les trois briques de la phase 1 (authentification, synchro de hiérarchie de dossiers, récupération de message) sont maintenant **validées empiriquement et implémentées dans `carbonio_xpcom`**, qui compile sans erreur ni warning contre le vrai `moz_http`/`protocol_shared`/`xpcom` de l'arbre Thunderbird (vérifié via `mach cargo check -p carbonio_xpcom`).
+
+Prochaine étape : le squelette C++ (`CarbonioIncomingServer`, `ICarbonioClient.idl`, `components.conf`) pour donner au bridge XPCOM une interface à implémenter et permettre à Thunderbird de créer un compte Carbonio.
