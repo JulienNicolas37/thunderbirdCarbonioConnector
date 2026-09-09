@@ -85,7 +85,7 @@ impl CarbonioClient {
     ///
     /// Validated empirically against a real Carbonio instance — see
     /// `get_message.rs` and the phase 1 spec doc.
-    pub async fn get_message(&self, message_id: &str) -> Result<get_message::Message> {
+    pub async fn get_message(&self, message_id: &str) -> Result<Message> {
         get_message::get_message(self, message_id).await
     }
 }
