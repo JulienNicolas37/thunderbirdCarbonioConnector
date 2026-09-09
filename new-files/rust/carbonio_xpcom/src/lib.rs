@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use nserror::{
     NS_ERROR_ALREADY_INITIALIZED, NS_ERROR_INVALID_ARG, NS_ERROR_NOT_IMPLEMENTED,
-    NS_ERROR_NOT_INITIALIZED, nsresult,
+    NS_ERROR_NOT_INITIALIZED, NS_OK, nsresult,
 };
 use nsstring::{nsACString, nsCString, nsString};
 use protocol_shared::{
