@@ -14,6 +14,7 @@
 #include "nsMsgFolderFlags.h"
 #include "nsMsgUtils.h"
 #include "nsPrintfCString.h"
+#include "OfflineStorage.h"
 
 constexpr auto kSyncStateTokenProperty = "carbonioSyncStateToken";
 
