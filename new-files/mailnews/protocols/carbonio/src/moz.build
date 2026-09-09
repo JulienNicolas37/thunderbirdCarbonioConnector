@@ -5,6 +5,7 @@
 UNIFIED_SOURCES += [
     "CarbonioIncomingServer.cpp",
     "CarbonioListeners.cpp",
+    "CarbonioProtocolInfo.cpp",
 ]
 
 XPCOM_MANIFESTS += [
