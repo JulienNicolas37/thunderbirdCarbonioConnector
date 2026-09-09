@@ -84,6 +84,7 @@ pub(super) async fn sync_folder_hierarchy(
     }
 
     for deleted in &sync_response.deleted {
+        log::debug!("SyncResponse deleted block (all types): {:?}", deleted.ids);
         for block in &deleted.folder {
             for id in block.split() {
                 changes.push(FolderChange::Deleted {

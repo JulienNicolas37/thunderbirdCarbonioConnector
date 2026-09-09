@@ -167,7 +167,7 @@ pub(crate) struct SyncResponse {
     pub deleted: Vec<Deleted>,
 }
 
-fn deserialize_token<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+fn deserialize_token<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -193,7 +193,7 @@ where
 /// the same flat shape before processing, so a single code path can handle
 /// both. See [`crate::client::sync_folder_hierarchy`].
 #[derive(Debug, Clone, Deserialize)]
-pub struct SyncFolder {
+pub(crate) struct SyncFolder {
     pub id: String,
     /// Absent for folders that no longer have a name in the payload — should
     /// not normally happen for folders we care about, but guard against it
@@ -216,10 +216,10 @@ pub struct SyncFolder {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Deleted {
-    /// Comma-separated ids, present regardless of `typed`. Kept for
-    /// debugging/logging; prefer `folder` (below) to know which of these
-    /// ids are actually folders.
+pub(crate) struct Deleted {
+    /// Comma-separated ids, present regardless of `typed`. Logged for
+    /// debugging when non-empty (see `sync_folder_hierarchy.rs`); prefer
+    /// `folder` below to know which of these ids are actually folders.
     #[serde(default)]
     pub ids: Option<String>,
     /// Only present when the request was sent with `typed: 1`. Each entry's
@@ -229,13 +229,13 @@ pub struct Deleted {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct IdsBlock {
+pub(crate) struct IdsBlock {
     pub ids: String,
 }
 
 impl IdsBlock {
     /// Splits the comma-separated id list into individual ids.
-    pub fn split(&self) -> impl Iterator<Item = &str> {
+    pub(crate) fn split(&self) -> impl Iterator<Item = &str> {
         self.ids.split(',').map(str::trim).filter(|s| !s.is_empty())
     }
 }
