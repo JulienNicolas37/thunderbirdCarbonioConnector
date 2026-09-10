@@ -29,11 +29,19 @@
  *     both go through it, so without this override, every single
  *     `GetStringProperty` call on a `CarbonioFolder` fails with
  *     `NS_ERROR_NOT_IMPLEMENTED` - confirmed via targeted debug logging.
+ *   - `GetSubFolders()` - the default doesn't lazily (re)discover children
+ *     already on disk from a previous session; it only picks up folders
+ *     added via `AddSubfolder` during the current one. Without this
+ *     override, the hierarchy synced and displayed in one session vanishes
+ *     the next time Thunderbird starts, even though nothing was actually
+ *     lost - confirmed empirically. Mirrors EWS's lazy
+ *     `CreateChildrenFromStore()`, asking the message store which children
+ *     it already knows about.
  *
  * Deliberately relying on `nsMsgDBFolder`'s default for everything else,
  * to be revisited only if phase 1 testing shows a specific need:
- *   - `GetSubFolders`, `GetNewMessages` - default behavior untested against
- *     a real Carbonio-backed hierarchy yet.
+ *   - `GetNewMessages` - default behavior untested against a real
+ *     Carbonio-backed hierarchy yet.
  *   - `GetSupportsOffline` - the default already reads the incoming
  *     server's offline support level, which `CarbonioIncomingServer` sets
  *     to `OFFLINE_SUPPORT_LEVEL_NONE`.
@@ -47,6 +55,8 @@ class CarbonioFolder : public nsMsgDBFolder {
 
   CarbonioFolder();
 
+  NS_IMETHOD GetSubFolders(nsTArray<RefPtr<nsIMsgFolder>>& folders) override;
+
  protected:
   virtual ~CarbonioFolder();
 
@@ -58,7 +68,17 @@ class CarbonioFolder : public nsMsgDBFolder {
                                   nsIMsgDatabase** database) override;
 
  private:
+  /**
+   * Recursively creates child folder objects by asking the message store
+   * which ones it already knows about on disk, so a hierarchy synced in a
+   * previous session is rediscovered rather than appearing empty.
+   * Idempotent via `mHasLoadedSubfolders`. Cribbed from EWS's
+   * `CreateChildrenFromStore`.
+   */
+  nsresult CreateChildrenFromStore();
+
   nsCString mBaseMessageURI;
+  bool mHasLoadedSubfolders = false;
 };
 
 #endif  // COMM_MAILNEWS_PROTOCOLS_CARBONIO_SRC_CARBONIOFOLDER_H_

@@ -5,6 +5,7 @@
 #include "CarbonioFolder.h"
 
 #include "nsIMsgDatabase.h"
+#include "nsIMsgPluggableStore.h"
 #include "nsMsgUtils.h"
 #include "nsNetUtil.h"
 
@@ -106,4 +107,53 @@ NS_IMETHODIMP CarbonioFolder::GetDBFolderInfoAndDB(
   NS_ADDREF(*database = mDatabase);
 
   return (*database)->GetDBFolderInfo(folderInfo);
+}
+
+NS_IMETHODIMP CarbonioFolder::GetSubFolders(
+    nsTArray<RefPtr<nsIMsgFolder>>& folders) {
+  // Lazily rediscover children already known to the message store from a
+  // previous session - without this, subFolders only ever reflects what
+  // was added via AddSubfolder during the current one.
+  if (!mHasLoadedSubfolders) {
+    nsresult rv = CreateChildrenFromStore();
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  return nsMsgDBFolder::GetSubFolders(folders);
+}
+
+nsresult CarbonioFolder::CreateChildrenFromStore() {
+  MOZ_ASSERT(!mHasLoadedSubfolders);  // Should only be called once.
+
+  nsCOMPtr<nsIMsgPluggableStore> msgStore;
+  nsresult rv = GetMsgStore(getter_AddRefs(msgStore));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Ask the store which children it thinks we have.
+  nsTArray<nsCString> childNames;
+  rv = msgStore->DiscoverChildFolders(this, childNames);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Have to set this NOW: folder creation via the folder lookup service
+  // uses GetSubFolders() to search for existing folders, which would
+  // otherwise recurse back into this same method.
+  mHasLoadedSubfolders = true;
+
+  for (auto& childName : childNames) {
+    // Use the base AddSubfolder, not a Carbonio-specific one (we don't have
+    // one): this is meant to restore state for folders that already exist,
+    // not to treat them as newly created.
+    nsCOMPtr<nsIMsgFolder> child;
+    rv = nsMsgDBFolder::AddSubfolder(childName, getter_AddRefs(child));
+    NS_ENSURE_SUCCESS(rv, rv);
+    // mSubFolders now includes the new child.
+  }
+
+  for (nsIMsgFolder* child : mSubFolders) {
+    // Recurse downward (we know it's a CarbonioFolder, since that's what
+    // our folder factory always creates).
+    rv = static_cast<CarbonioFolder*>(child)->CreateChildrenFromStore();
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return NS_OK;
 }
