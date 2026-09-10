@@ -185,12 +185,22 @@ nsresult CarbonioIncomingServer::FindFolderWithId(const nsACString& id,
   nsTArray<RefPtr<nsIMsgFolder>> foldersToScan;
   foldersToScan.AppendElement(root);
 
+  // TEMPORARY DIAGNOSTIC: accumulate what was actually seen during the scan,
+  // so a failure can be logged with the full picture of what this lookup
+  // found (or didn't) rather than guessing.
+  nsCString scanLog;
+
   while (foldersToScan.Length() != 0) {
     nsTArray<RefPtr<nsIMsgFolder>> nextFoldersToScan;
 
     for (auto folder : foldersToScan) {
       nsCString folderId;
       rv = folder->GetStringProperty(kCarbonioIdProperty, folderId);
+
+      nsCString folderName;
+      folder->GetName(folderName);
+      scanLog.AppendPrintf("[name=%s id=%s(rv=%08x)] ", folderName.get(),
+                           folderId.get(), uint32_t(rv));
 
       if (NS_SUCCEEDED(rv) && folderId.Equals(id)) {
         folder.forget(_retval);
@@ -208,6 +218,10 @@ nsresult CarbonioIncomingServer::FindFolderWithId(const nsACString& id,
 
     foldersToScan = std::move(nextFoldersToScan);
   }
+
+  fprintf(stderr, "[carbonio-debug] FindFolderWithId(%s) FAILED, scanned: %s\n",
+          nsCString(id).get(), scanLog.get());
+  fflush(stderr);
 
   return failureStatus;
 }
