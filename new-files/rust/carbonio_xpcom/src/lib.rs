@@ -281,7 +281,7 @@ async fn deliver_folder_sync(
                     unsafe {
                         listener.OnFolderUpserted(&*id, &*parent_id, &*name, is_mail_folder)
                     },
-                    "OnFolderUpserted",
+                    &format!("OnFolderUpserted(id={id}, parentId={parent_id}, name={name})"),
                 );
             }
             FolderChange::Deleted { id } => {
