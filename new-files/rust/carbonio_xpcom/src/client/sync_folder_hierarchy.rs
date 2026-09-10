@@ -116,7 +116,7 @@ fn flatten_folder(folder: &SyncFolder, out: &mut Vec<FolderChange>) {
             id: folder.id.clone(),
             parent_id: folder.l.clone(),
             name: name.clone(),
-            is_mail_folder: is_mail_view(folder.view.as_deref()),
+            is_mail_folder: is_mail_folder(&folder.id, folder.view.as_deref()),
         });
     }
 
@@ -125,15 +125,34 @@ fn flatten_folder(folder: &SyncFolder, out: &mut Vec<FolderChange>) {
     }
 }
 
-/// Best-effort filter for "is this folder a mail folder".
-///
-/// CAUTION (see the phase 1 spec doc): `view` is *absent* for several system
-/// mail folders (Inbox, Trash, Drafts, Sent, Junk) as well as for at least
-/// one non-mail folder seen in testing ("Comments", id `17`), so this alone
-/// is not a fully reliable filter yet. Combine with the known system folder
-/// ids (`2`=Inbox, `3`=Trash, `4`=Junk, `5`=Sent, `6`=Drafts) once this is
-/// wired into the C++ side, rather than relying on this function alone.
-fn is_mail_view(view: Option<&str>) -> bool {
+/// Known non-mail system folders, confirmed empirically to have stable ids
+/// across Carbonio instances (see the phase 1 spec doc). Needed in addition
+/// to the `view`-based check below: "Chats" (id `14`) reports
+/// `view: "message"`, exactly like a real mail folder, so `view` alone
+/// can't tell them apart. "Tasks" (id `15`) and "Comments" (id `17`) instead
+/// report no `view` at all, same as several genuine system mail folders
+/// (Inbox, Trash, Drafts, Sent, Junk) - so absence of `view` isn't a
+/// reliable signal either way on its own.
+const NON_MAIL_SYSTEM_FOLDER_IDS: &[&str] = &[
+    "7",  // Contacts
+    "8",  // Tags
+    "9",  // Conversations
+    "10", // Calendar
+    "13", // Emailed Contacts
+    "14", // Chats
+    "15", // Tasks
+    "17", // Comments
+];
+
+/// Best-effort filter for "is this folder a mail folder", combining the
+/// known system folder ids above with a `view`-based check for
+/// user-created non-mail folders (e.g. a personal address book or calendar
+/// created under a shared folder), which do carry an accurate `view`.
+fn is_mail_folder(id: &str, view: Option<&str>) -> bool {
+    if NON_MAIL_SYSTEM_FOLDER_IDS.contains(&id) {
+        return false;
+    }
+
     !matches!(
         view,
         Some("appointment")
