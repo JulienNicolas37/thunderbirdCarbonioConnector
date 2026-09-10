@@ -119,6 +119,14 @@ nsresult CarbonioIncomingServer::UpdateFolderWithDetails(
   nsCOMPtr<nsIMsgFolder> parentFolder;
   rv = folder->GetParent(getter_AddRefs(parentFolder));
   NS_ENSURE_SUCCESS(rv, rv);
+  if (!parentFolder) {
+    // No parent (e.g. this is the account's root folder, which has no
+    // parent to rename/reparent against) - nothing sensible to do here.
+    // Shouldn't normally be reached once the root folder is properly
+    // skipped in SyncFolderList's `onFolderUpserted` callback, but guarding
+    // here too since dereferencing a null parent previously crashed.
+    return NS_OK;
+  }
 
   nsAutoCString currentName;
   MOZ_TRY(folder->GetName(currentName));
@@ -272,6 +280,17 @@ nsresult CarbonioIncomingServer::SyncFolderList(
     nsCOMPtr<nsIMsgFolder> existingFolder;
     nsresult rv = self->FindFolderWithId(id, getter_AddRefs(existingFolder));
     if (NS_SUCCEEDED(rv)) {
+      // Skip the account's root folder itself: it's already tagged by
+      // `onNewRootFolder` above, and has no parent to rename/reparent
+      // against (attempting to do so previously crashed on a null parent
+      // pointer in UpdateFolderWithDetails).
+      RefPtr<nsIMsgFolder> rootFolder;
+      rv = self->GetRootFolder(getter_AddRefs(rootFolder));
+      NS_ENSURE_SUCCESS(rv, rv);
+      if (existingFolder == rootFolder) {
+        return NS_OK;
+      }
+
       return self->UpdateFolderWithDetails(id, parentId, name, msgWindow);
     }
     return self->MaybeCreateFolderWithDetails(id, parentId, name,
