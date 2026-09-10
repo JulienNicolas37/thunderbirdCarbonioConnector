@@ -19,11 +19,16 @@
  *
  *   - `GetDatabase()` - pure virtual on `nsMsgDBFolder`, mandatory for any
  *     subclass.
- *   - `CreateBaseMessageURI()` and `GetIncomingServerType()` - not pure
- *     virtual, but their defaults are explicit "not implemented"
- *     placeholders (see `nsMsgDBFolder.cpp`), so a working override is
- *     needed for correct behavior even though the compiler wouldn't
- *     enforce it.
+ *   - `CreateBaseMessageURI()`, `GetIncomingServerType()`, and
+ *     `GetDBFolderInfoAndDB()` - not pure virtual, but their defaults are
+ *     explicit "not implemented" placeholders (see `nsMsgDBFolder.cpp`), so
+ *     a working override is needed for correct behavior even though the
+ *     compiler wouldn't enforce it. `GetDBFolderInfoAndDB()`'s stub in
+ *     particular isn't just an unlikely edge case: `GetStringProperty`/
+ *     `SetStringProperty` (used to identify folders by their Carbonio id)
+ *     both go through it, so without this override, every single
+ *     `GetStringProperty` call on a `CarbonioFolder` fails with
+ *     `NS_ERROR_NOT_IMPLEMENTED` - confirmed via targeted debug logging.
  *
  * Deliberately relying on `nsMsgDBFolder`'s default for everything else,
  * to be revisited only if phase 1 testing shows a specific need:
@@ -49,6 +54,8 @@ class CarbonioFolder : public nsMsgDBFolder {
   virtual nsresult GetDatabase() override;
 
   NS_IMETHOD GetIncomingServerType(nsACString& aIncomingServerType) override;
+  NS_IMETHOD GetDBFolderInfoAndDB(nsIDBFolderInfo** folderInfo,
+                                  nsIMsgDatabase** database) override;
 
  private:
   nsCString mBaseMessageURI;

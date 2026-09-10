@@ -85,3 +85,25 @@ NS_IMETHODIMP CarbonioFolder::GetIncomingServerType(
   aIncomingServerType.AssignLiteral("carbonio");
   return NS_OK;
 }
+
+/**
+ * Mandatory in practice, even though not pure virtual: the base
+ * `nsMsgDBFolder` implementation is an explicit `NS_ERROR_NOT_IMPLEMENTED`
+ * stub. `GetStringProperty`/`SetStringProperty` - which we rely on to tag
+ * folders with their Carbonio id - both go through this, so without a
+ * working override every such call fails. Confirmed via targeted debug
+ * logging. Cribbed from EWS, itself cribbed from `nsImapMailFolder.cpp`.
+ */
+NS_IMETHODIMP CarbonioFolder::GetDBFolderInfoAndDB(
+    nsIDBFolderInfo** folderInfo, nsIMsgDatabase** database) {
+  NS_ENSURE_ARG_POINTER(folderInfo);
+  NS_ENSURE_ARG_POINTER(database);
+
+  // Ensure that our cached database handle is initialized.
+  nsresult rv = GetDatabase();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  NS_ADDREF(*database = mDatabase);
+
+  return (*database)->GetDBFolderInfo(folderInfo);
+}
