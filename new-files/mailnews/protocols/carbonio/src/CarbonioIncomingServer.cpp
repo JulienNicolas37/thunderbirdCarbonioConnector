@@ -168,6 +168,16 @@ nsresult CarbonioIncomingServer::FindFolderWithId(const nsACString& id,
   nsresult rv = GetRootFolder(getter_AddRefs(root));
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // TEMPORARY DIAGNOSTIC
+  nsCString rootProp;
+  nsresult rootPropRv = root->GetStringProperty(kCarbonioIdProperty, rootProp);
+  fprintf(stderr,
+          "[carbonio-debug] FindFolderWithId(%s): root=%p rootPropRv=%08x "
+          "rootProp=%s\n",
+          nsCString(id).get(), static_cast<void*>(root.get()),
+          uint32_t(rootPropRv), rootProp.get());
+  fflush(stderr);
+
   nsTArray<RefPtr<nsIMsgFolder>> foldersToScan;
   foldersToScan.AppendElement(root);
 
@@ -270,7 +280,18 @@ nsresult CarbonioIncomingServer::SyncFolderList(
     RefPtr<nsIMsgFolder> root;
     nsresult rv = self->GetRootFolder(getter_AddRefs(root));
     NS_ENSURE_SUCCESS(rv, rv);
-    return root->SetStringProperty(kCarbonioIdProperty, id);
+    rv = root->SetStringProperty(kCarbonioIdProperty, id);
+    // TEMPORARY DIAGNOSTIC: confirm the property round-trips on the same
+    // object right after being set, to rule out a set/get asymmetry.
+    nsCString readBack;
+    nsresult readRv = root->GetStringProperty(kCarbonioIdProperty, readBack);
+    fprintf(stderr,
+            "[carbonio-debug] onNewRootFolder: set id=%s rv=%08x; "
+            "immediate read-back rv=%08x value=%s; root=%p\n",
+            nsCString(id).get(), uint32_t(rv), uint32_t(readRv),
+            readBack.get(), static_cast<void*>(root.get()));
+    fflush(stderr);
+    return rv;
   };
 
   nsCOMPtr<nsIMsgWindow> msgWindow = aMsgWindow;
