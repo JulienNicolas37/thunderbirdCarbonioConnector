@@ -85,8 +85,20 @@ Sans paramètre supplémentaire, `GetMsgRequest` renvoie la représentation **pa
 
 Le champ `l` (dossier parent) reste présent dans la réponse même en mode `raw`, ce qui permet de savoir à quel dossier rattacher le message sans requête supplémentaire.
 
-## 6. Statut
+## 6. Liste de messages (`SearchRequest`) — validée empiriquement
 
-Les trois briques de la phase 1 (authentification, synchro de hiérarchie de dossiers, récupération de message) sont maintenant **validées empiriquement et implémentées dans `carbonio_xpcom`**, qui compile sans erreur ni warning contre le vrai `moz_http`/`protocol_shared`/`xpcom` de l'arbre Thunderbird (vérifié via `mach cargo check -p carbonio_xpcom`).
+Contrairement à `SyncRequest` (qui ne donne que des IDs bruts), `SearchRequest` (`urn:zimbraMail`) renvoie les vraies métadonnées de messages nécessaires à l'affichage d'une liste :
 
-Prochaine étape : le squelette C++ (`CarbonioIncomingServer`, `ICarbonioClient.idl`, `components.conf`) pour donner au bridge XPCOM une interface à implémenter et permettre à Thunderbird de créer un compte Carbonio.
+- **Requête** : `types: "message"`, `query` (syntaxe de recherche Zimbra), `limit`, `offset`, `sortBy`.
+- **Recherche par ID de dossier confirmée** : `query: "inid:<id>"` fonctionne de façon fiable (contrairement à `in:<nom>`, ambigu en cas de noms de dossiers dupliqués — on a plusieurs "Archive"/"Archives" dans nos données de test). C'est la forme à utiliser pour la synchro par dossier, puisqu'on identifie déjà tout par ID Carbonio.
+- **Pagination** : `more: true/false` au niveau racine indique s'il reste des résultats au-delà de `limit`+`offset`.
+- **Champs utiles par message** : `id`, `su` (sujet), `d` (date, ms epoch), `l` (dossier parent), `f` (drapeaux : `u`=non lu, absent=lu ; d'autres valeurs comme `s`/`v` observées, à catégoriser plus finement si besoin), `e[]` (participants, même structure que `GetMsgRequest` : `t:"f"` pour l'expéditeur), `s` (taille), `fr` (aperçu).
+- **Bruit à ignorer pour la phase 1** : les messages qui sont des invitations de réunion portent un champ `inv` avec toute la structure iCal (fuseaux, récurrence...) — pas besoin de le parser, on se limite aux champs communs ci-dessus quel que soit le type de message.
+
+## 7. Statut
+
+La hiérarchie de dossiers (auth, sync, création/mise à jour/suppression, persistance entre sessions) est **implémentée, testée en conditions réelles dans Thunderbird, et fonctionnelle** — voir le document de conception pour le détail des bugs rencontrés et corrigés en cours de route.
+
+La récupération de message (`GetMsgRequest` en mode `raw`) et la liste de messages (`SearchRequest` par `inid:<id>`) sont **validées empiriquement côté API**, mais pas encore implémentées côté connecteur : ni le contrat Rust/C++ de synchro des messages par dossier, ni le bridge XPCOM `getMessage` (toujours stubé), ni le protocole d'ouverture de message.
+
+Prochaine étape : concevoir et implémenter la synchro de la liste de messages par dossier (équivalent du `SyncMessagesForFolder` d'EWS), en s'appuyant sur `SearchRequest`.

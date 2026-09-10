@@ -31,6 +31,8 @@ Usage :
     python3 carbonio_explorer.py sync
     python3 carbonio_explorer.py sync --sync-token "TOKEN_PRECEDENT"
     python3 carbonio_explorer.py message --id 257
+    python3 carbonio_explorer.py search --query 'in:inbox'
+    python3 carbonio_explorer.py search --query 'in:inbox' --limit 5 --offset 25
     python3 carbonio_explorer.py --config /chemin/autre_config.ini auth
     python3 carbonio_explorer.py --host srv.example.com --user u --password p auth  # sans config
 """
@@ -266,6 +268,36 @@ def get_message(host: str, token: str, msg_id: str, *, verify: bool = True, raw:
     return soap_request(host, body, token=token, verify=verify)
 
 
+def search_messages(
+    host: str,
+    token: str,
+    *,
+    verify: bool = True,
+    query: str = "in:inbox",
+    limit: int = 25,
+    offset: int = 0,
+    sort_by: str = "dateDesc",
+) -> dict:
+    """
+    Recherche des messages via SearchRequest — l'appel Zimbra/Carbonio dédié
+    à la liste de messages (sujet, expéditeur, date, drapeaux...), par
+    opposition à SyncRequest qui ne donne que des IDs bruts sans métadonnées.
+
+    query : syntaxe de recherche Zimbra, ex. 'in:inbox', 'in:"Inbox/Test 01"'.
+    """
+    body = {
+        "SearchRequest": {
+            "_jsns": "urn:zimbraMail",
+            "types": "message",
+            "query": query,
+            "limit": limit,
+            "offset": offset,
+            "sortBy": sort_by,
+        }
+    }
+    return soap_request(host, body, token=token, verify=verify)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
@@ -307,6 +339,12 @@ def main() -> None:
         help="Ajoute raw=1 : demande le contenu MIME brut (RFC822) plutôt que la forme structurée/parsée",
     )
 
+    search_parser = subparsers.add_parser("search", help="Recherche des messages (liste + métadonnées)")
+    search_parser.add_argument("--query", default="in:inbox", help="Requête de recherche Zimbra (défaut: in:inbox)")
+    search_parser.add_argument("--limit", type=int, default=25, help="Nombre max de résultats (défaut: 25)")
+    search_parser.add_argument("--offset", type=int, default=0, help="Décalage pour la pagination (défaut: 0)")
+    search_parser.add_argument("--sort-by", default="dateDesc", help="Critère de tri (défaut: dateDesc)")
+
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -346,6 +384,17 @@ def main() -> None:
 
         elif args.command == "message":
             get_message(host, token, args.id, verify=verify, raw=args.raw)
+
+        elif args.command == "search":
+            search_messages(
+                host,
+                token,
+                verify=verify,
+                query=args.query,
+                limit=args.limit,
+                offset=args.offset,
+                sort_by=args.sort_by,
+            )
 
     except requests.HTTPError as exc:
         logger.error("Erreur HTTP : %s", exc)
