@@ -192,6 +192,11 @@ impl XpcomCarbonioBridge {
             Some(sync_state_token.to_utf8().into_owned())
         };
 
+        log::info!(
+            "sync_folder_hierarchy invoked (sync_state_token: {:?})",
+            sync_state_token
+        );
+
         let client = self.client()?;
         let listener = RefPtr::new(listener);
 
@@ -247,6 +252,11 @@ async fn deliver_folder_sync(
             return;
         }
     };
+
+    log::info!(
+        "folder hierarchy sync succeeded: {} change(s) (initial sync: {is_initial_sync})",
+        sync_result.changes.len()
+    );
 
     if is_initial_sync {
         // The mailbox root's Carbonio id is always "1" ("USER_ROOT") -
