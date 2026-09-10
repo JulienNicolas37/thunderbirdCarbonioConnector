@@ -162,21 +162,25 @@ nsresult CarbonioIncomingServer::DeleteFolderWithId(const nsACString& id) {
 
 nsresult CarbonioIncomingServer::FindFolderWithId(const nsACString& id,
                                                    nsIMsgFolder** _retval) {
+  // The account root ("1", USER_ROOT - confirmed empirically stable, see
+  // the phase 1 spec doc) is special-cased here rather than looked up via
+  // property, unlike every other folder: the folder object Thunderbird
+  // hands back from GetRootFolder() isn't a CarbonioFolder instance and has
+  // no working per-folder database, so SetStringProperty/GetStringProperty
+  // don't roundtrip on it. (SetStringProperty silently swallows the
+  // failure and always reports success - a footgun in nsMsgDBFolder's
+  // default implementation - while GetStringProperty correctly surfaces
+  // NS_ERROR_NOT_IMPLEMENTED from the underlying GetDatabase() call.
+  // Confirmed via targeted debug logging.)
+  if (id.EqualsLiteral("1")) {
+    return GetRootFolder(_retval);
+  }
+
   nsresult failureStatus{NS_MSG_ERROR_FOLDER_MISSING};
 
   RefPtr<nsIMsgFolder> root;
   nsresult rv = GetRootFolder(getter_AddRefs(root));
   NS_ENSURE_SUCCESS(rv, rv);
-
-  // TEMPORARY DIAGNOSTIC
-  nsCString rootProp;
-  nsresult rootPropRv = root->GetStringProperty(kCarbonioIdProperty, rootProp);
-  fprintf(stderr,
-          "[carbonio-debug] FindFolderWithId(%s): root=%p rootPropRv=%08x "
-          "rootProp=%s\n",
-          nsCString(id).get(), static_cast<void*>(root.get()),
-          uint32_t(rootPropRv), rootProp.get());
-  fflush(stderr);
 
   nsTArray<RefPtr<nsIMsgFolder>> foldersToScan;
   foldersToScan.AppendElement(root);
@@ -276,22 +280,11 @@ nsresult CarbonioIncomingServer::SyncFolderList(
     syncStateToken = EmptyCString();
   }
 
-  auto onNewRootFolder = [self = RefPtr(this)](const nsACString& id) {
-    RefPtr<nsIMsgFolder> root;
-    nsresult rv = self->GetRootFolder(getter_AddRefs(root));
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = root->SetStringProperty(kCarbonioIdProperty, id);
-    // TEMPORARY DIAGNOSTIC: confirm the property round-trips on the same
-    // object right after being set, to rule out a set/get asymmetry.
-    nsCString readBack;
-    nsresult readRv = root->GetStringProperty(kCarbonioIdProperty, readBack);
-    fprintf(stderr,
-            "[carbonio-debug] onNewRootFolder: set id=%s rv=%08x; "
-            "immediate read-back rv=%08x value=%s; root=%p\n",
-            nsCString(id).get(), uint32_t(rv), uint32_t(readRv),
-            readBack.get(), static_cast<void*>(root.get()));
-    fflush(stderr);
-    return rv;
+  auto onNewRootFolder = [](const nsACString&) {
+    // No-op: the root folder ("1") is now special-cased directly in
+    // FindFolderWithId rather than identified via a stored property (see
+    // its doc comment for why) - nothing needs to be recorded here.
+    return NS_OK;
   };
 
   nsCOMPtr<nsIMsgWindow> msgWindow = aMsgWindow;
