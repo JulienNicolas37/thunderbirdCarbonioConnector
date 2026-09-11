@@ -315,3 +315,93 @@ pub(crate) struct RawContent {
     #[serde(rename = "_content")]
     pub content: String,
 }
+
+// --- SearchRequest / SearchResponse -----------------------------------------
+//
+// Validated empirically against a real Carbonio instance (see the phase 1
+// spec doc): SearchRequest (as opposed to SyncRequest, which only gives raw
+// ids) returns actual message metadata - subject, date, sender, flags, size -
+// suitable for populating a folder's message list.
+//
+// Confirmed: `query: "inid:<folder id>"` reliably scopes results to a single
+// folder by id, avoiding the ambiguity of `in:<name>` when folder names are
+// duplicated (e.g. this account has two folders literally named "Archive"
+// and "Archives"). Pagination is via `limit`/`offset`, with `more` in the
+// response indicating whether further results exist beyond the current page.
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SearchRequest {
+    #[serde(rename = "_jsns")]
+    pub jsns: &'static str,
+    pub types: &'static str,
+    pub query: String,
+    pub limit: u32,
+    pub offset: u32,
+    #[serde(rename = "sortBy")]
+    pub sort_by: &'static str,
+}
+
+/// See [`AuthRequestBody`] for why this wrapping is needed.
+#[derive(Debug, Serialize)]
+pub(crate) struct SearchRequestBody {
+    #[serde(rename = "SearchRequest")]
+    pub search_request: SearchRequest,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct SearchResponseBody {
+    #[serde(rename = "SearchResponse")]
+    pub search_response: SearchResponse,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct SearchResponse {
+    #[serde(default)]
+    pub m: Vec<SearchMessage>,
+    /// Whether more results exist beyond the requested `limit`/`offset`.
+    #[serde(default)]
+    pub more: bool,
+}
+
+/// A single message summary as returned by `SearchRequest`.
+///
+/// Scope note: messages that are meeting invitations carry a large `inv`
+/// field with full iCal data (timezones, recurrence rules...) - deliberately
+/// not modeled here, since phase 1 only needs the fields common to every
+/// message regardless of its kind. `serde` drops unknown fields by default,
+/// so `inv` (and anything else not listed below) is simply ignored.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct SearchMessage {
+    pub id: String,
+    /// Subject. Optional defensively; not expected to actually be absent in
+    /// practice.
+    #[serde(default)]
+    pub su: Option<String>,
+    /// Date received, in milliseconds since epoch.
+    pub d: i64,
+    /// Flags string (e.g. contains `u` for unread; absent entirely for a
+    /// read message - confirmed empirically). Not a fixed-width bitfield,
+    /// each character is an independent flag - see
+    /// `MessageSummary::is_read` for how this is interpreted.
+    #[serde(default)]
+    pub f: Option<String>,
+    /// Size in bytes.
+    #[serde(default)]
+    pub s: Option<u64>,
+    #[serde(default)]
+    pub e: Vec<SearchParticipant>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct SearchParticipant {
+    /// Email address.
+    #[serde(default)]
+    pub a: Option<String>,
+    /// Personal/display name.
+    #[serde(default)]
+    pub p: Option<String>,
+    /// Participant type: `"f"` for from, `"t"`/`"c"`/`"b"` for to/cc/bcc
+    /// (only `"f"` is used for phase 1's purposes).
+    #[serde(default)]
+    pub t: Option<String>,
+}

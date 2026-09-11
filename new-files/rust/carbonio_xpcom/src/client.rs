@@ -16,9 +16,11 @@ use crate::error::Result;
 mod authenticate;
 mod get_message;
 mod sync_folder_hierarchy;
+mod sync_messages_for_folder;
 
 pub use get_message::Message;
 pub use sync_folder_hierarchy::{FolderChange, SyncResult};
+pub use sync_messages_for_folder::{MessageListResult, MessageSummary};
 
 /// A cached, still-valid (as far as we know) authentication session.
 struct Session {
@@ -99,6 +101,17 @@ impl CarbonioClient {
     /// `get_message.rs` and the phase 1 spec doc.
     pub async fn get_message(&self, message_id: &str) -> Result<Message> {
         get_message::get_message(self, message_id).await
+    }
+
+    /// Fetches the full list of message summaries for a single folder.
+    ///
+    /// Validated empirically against a real Carbonio instance — see
+    /// `sync_messages_for_folder.rs` and the phase 1 spec doc.
+    pub async fn sync_messages_for_folder(
+        &self,
+        folder_id: &str,
+    ) -> Result<MessageListResult> {
+        sync_messages_for_folder::sync_messages_for_folder(self, folder_id).await
     }
 }
 

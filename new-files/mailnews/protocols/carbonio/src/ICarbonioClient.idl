@@ -11,6 +11,7 @@ interface nsIURI;
 
 interface ICarbonioFolderListener;
 interface ICarbonioMessageFetchListener;
+interface ICarbonioMessageListListener;
 
 /**
  * A client for communicating with a Carbonio server (SOAP-over-JSON API,
@@ -108,6 +109,22 @@ interface ICarbonioClient : nsISupports
    * @param id - The id of the message to fetch.
    */
   void getMessage(in ICarbonioMessageFetchListener listener, in AUTF8String id);
+
+  /**
+   * Synchronizes the list of messages for a single folder (subject, sender,
+   * date, read state, size - not content).
+   *
+   * Confirmed empirically: `SearchRequest` with `query: "inid:<folderId>"`
+   * reliably scopes results to a single folder by id (as opposed to
+   * `in:<name>`, ambiguous when folder names are duplicated). Pagination is
+   * handled internally by the Rust implementation - this call always
+   * delivers the complete list for the folder.
+   *
+   * @param listener - Listener for communicating each message's summary and
+   *   the operation's overall outcome.
+   * @param folderId - The id of the folder to synchronize.
+   */
+  void syncMessagesForFolder(in ICarbonioMessageListListener listener, in AUTF8String folderId);
 };
 
 /**
@@ -193,6 +210,31 @@ interface ICarbonioMessageFetchListener : nsISupports
   void onFetchStart();
   void onFetchedDataAvailable(in nsIInputStream inputStream);
   void onFetchStop(in nsresult status);
+};
+
+/**
+ * Callbacks for synchronizing a folder's message list.
+ *
+ * @param id - The message's Carbonio id.
+ * @param subject - The message's subject.
+ * @param dateMs - Date received, in milliseconds since epoch (as given by
+ *   Carbonio - conversion to whatever unit the local database expects is
+ *   the consumer's responsibility).
+ * @param fromAddress - The sender's email address. Empty string if
+ *   unavailable.
+ * @param fromDisplayName - The sender's display name. Empty string if
+ *   unavailable.
+ * @param isRead - Whether the message is marked as read.
+ * @param size - The message's size in bytes.
+ */
+[scriptable, uuid(7c4e2a1d-9b3f-4e6a-8c1d-5f2a7b9e4c60)]
+interface ICarbonioMessageListListener : nsISupports
+{
+  void onMessage(in AUTF8String id, in AUTF8String subject, in long long dateMs,
+                 in AUTF8String fromAddress, in AUTF8String fromDisplayName,
+                 in boolean isRead, in unsigned long long size);
+  void onSuccess();
+  void onOperationFailure(in nsresult status);
 };
 
 /**

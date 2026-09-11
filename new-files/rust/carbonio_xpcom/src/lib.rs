@@ -41,11 +41,14 @@ use protocol_shared::{
 use url::Url;
 use xpcom::{
     RefPtr,
-    interfaces::{ICarbonioFolderListener, ICarbonioMessageFetchListener, nsIMsgIncomingServer, nsIURI, nsIUrlListener},
+    interfaces::{
+        ICarbonioFolderListener, ICarbonioMessageFetchListener, ICarbonioMessageListListener,
+        nsIMsgIncomingServer, nsIURI, nsIUrlListener,
+    },
     nsIID, xpcom_method,
 };
 
-use client::{CarbonioClient, FolderChange};
+use client::{CarbonioClient, FolderChange, MessageSummary};
 
 pub mod client;
 pub mod error;
@@ -224,6 +227,26 @@ impl XpcomCarbonioBridge {
         Err(NS_ERROR_NOT_IMPLEMENTED)
     }
 
+    xpcom_method!(sync_messages_for_folder => SyncMessagesForFolder(
+        listener: *const ICarbonioMessageListListener,
+        folder_id: *const nsACString));
+    fn sync_messages_for_folder(
+        &self,
+        listener: &ICarbonioMessageListListener,
+        folder_id: &nsACString,
+    ) -> Result<(), nsresult> {
+        let folder_id = folder_id.to_utf8().into_owned();
+        let client = self.client()?;
+        let listener = RefPtr::new(listener);
+
+        moz_task::spawn_local("sync_messages_for_folder", async move {
+            deliver_message_list_sync(client, listener, folder_id).await;
+        })
+        .detach();
+
+        Ok(())
+    }
+
     /// Gets a clone of the client if initialized, or
     /// [`NS_ERROR_NOT_INITIALIZED`] otherwise.
     fn client(&self) -> Result<Arc<CarbonioClient>, nsresult> {
@@ -296,6 +319,65 @@ async fn deliver_folder_sync(
         report_xpcom_error(
             unsafe { listener.OnSyncStateTokenChanged(&*token) },
             "OnSyncStateTokenChanged",
+        );
+    }
+
+    report_xpcom_error(unsafe { listener.OnSuccess() }, "OnSuccess");
+}
+
+/// Drives a folder's message list sync to completion and reports the
+/// results through `listener`, translating each [`MessageSummary`] into an
+/// `ICarbonioMessageListListener::OnMessage` call.
+async fn deliver_message_list_sync(
+    client: Arc<CarbonioClient>,
+    listener: RefPtr<ICarbonioMessageListListener>,
+    folder_id: String,
+) {
+    let result = client.sync_messages_for_folder(&folder_id).await;
+
+    let list_result = match result {
+        Ok(list_result) => list_result,
+        Err(err) => {
+            log::error!("message list sync for folder {folder_id} failed: {err}");
+            let status: nsresult = (&err).into();
+            report_xpcom_error(unsafe { listener.OnOperationFailure(status) }, "OnOperationFailure");
+            return;
+        }
+    };
+
+    log::info!(
+        "message list sync for folder {folder_id} succeeded: {} message(s)",
+        list_result.messages.len()
+    );
+
+    for MessageSummary {
+        id,
+        subject,
+        date_ms,
+        from_address,
+        from_display_name,
+        is_read,
+        size,
+    } in list_result.messages
+    {
+        let id = nsCString::from(id);
+        let subject = nsCString::from(subject);
+        let from_address = nsCString::from(from_address.unwrap_or_default());
+        let from_display_name = nsCString::from(from_display_name.unwrap_or_default());
+
+        report_xpcom_error(
+            unsafe {
+                listener.OnMessage(
+                    &*id,
+                    &*subject,
+                    date_ms,
+                    &*from_address,
+                    &*from_display_name,
+                    is_read,
+                    size,
+                )
+            },
+            "OnMessage",
         );
     }
 
