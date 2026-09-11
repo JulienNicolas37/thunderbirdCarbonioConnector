@@ -8,6 +8,14 @@
 #include "nsMsgDBFolder.h"
 
 /**
+ * Local property name used to record a message's Carbonio id on its
+ * `nsIMsgDBHdr`, so a later sync can tell whether a message already exists
+ * locally. Mirrors `kCarbonioIdProperty` (used for folders on
+ * `CarbonioIncomingServer`).
+ */
+constexpr auto kCarbonioMsgIdProperty = "carbonioMsgId";
+
+/**
  * The Carbonio implementation of `nsIMsgFolder`.
  *
  * Modeled after `ExchangeFolder`, but *much* smaller for phase 1: reading
@@ -40,14 +48,18 @@
  *
  * Deliberately relying on `nsMsgDBFolder`'s default for everything else,
  * to be revisited only if phase 1 testing shows a specific need:
- *   - `GetNewMessages` - default behavior untested against a real
- *     Carbonio-backed hierarchy yet.
  *   - `GetSupportsOffline` - the default already reads the incoming
  *     server's offline support level, which `CarbonioIncomingServer` sets
  *     to `OFFLINE_SUPPORT_LEVEL_NONE`.
  *   - `GetDeletable` - defaults to `false`, appropriate until folder
  *     deletion is implemented (a later phase).
  *   - Every copy/move/compact/junk-related method.
+ *
+ * `GetNewMessages` *is* overridden (unlike the folder-hierarchy scaffold's
+ * original assessment): the default is a no-op, and this is the folder-level
+ * trigger point for message list sync (mirroring
+ * `CarbonioIncomingServer::GetNewMessages`, which only syncs the folder
+ * hierarchy, not message content).
  */
 class CarbonioFolder : public nsMsgDBFolder {
  public:
@@ -56,6 +68,8 @@ class CarbonioFolder : public nsMsgDBFolder {
   CarbonioFolder();
 
   NS_IMETHOD GetSubFolders(nsTArray<RefPtr<nsIMsgFolder>>& folders) override;
+  NS_IMETHOD GetNewMessages(nsIMsgWindow* aWindow,
+                            nsIUrlListener* aListener) override;
 
  protected:
   virtual ~CarbonioFolder();
@@ -76,6 +90,26 @@ class CarbonioFolder : public nsMsgDBFolder {
    * `CreateChildrenFromStore`.
    */
   nsresult CreateChildrenFromStore();
+
+  /**
+   * Looks up this folder's Carbonio id (stored via `kCarbonioIdProperty`)
+   * and, if present, synchronizes its message list. Called by
+   * `GetNewMessages`; split out so it can be called without requiring a
+   * window/listener (not needed for phase 1's synchronous-enough sync, kept
+   * simple rather than mirroring `nsIUrlListener`'s full async contract).
+   */
+  nsresult SyncMessages();
+
+  /**
+   * Creates or updates the local header for a single message, given the
+   * metadata delivered by `ICarbonioMessageListListener::OnMessage`.
+   * Looked up first by `kCarbonioMsgIdProperty` so re-running a sync doesn't
+   * create duplicates.
+   */
+  nsresult UpsertMessageHeader(const nsACString& id, const nsACString& subject,
+                               int64_t dateMs, const nsACString& fromAddress,
+                               const nsACString& fromDisplayName, bool isRead,
+                               uint64_t size);
 
   nsCString mBaseMessageURI;
   bool mHasLoadedSubfolders = false;

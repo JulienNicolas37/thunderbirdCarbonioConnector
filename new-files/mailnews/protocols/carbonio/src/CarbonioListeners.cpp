@@ -70,3 +70,24 @@ NS_IMETHODIMP CarbonioSimpleListener::OnOperationSuccess() {
 NS_IMETHODIMP CarbonioSimpleListener::OnOperationFailure(nsresult status) {
   return mOnFailure(status);
 }
+
+// Implementation of CarbonioMessageListListener
+
+NS_IMPL_ISUPPORTS(CarbonioMessageListListener, ICarbonioMessageListListener)
+
+NS_IMETHODIMP CarbonioMessageListListener::OnMessage(
+    const nsACString& id, const nsACString& subject, int64_t dateMs,
+    const nsACString& fromAddress, const nsACString& fromDisplayName,
+    bool isRead, uint64_t size) {
+  return mOnMessage(id, subject, dateMs, fromAddress, fromDisplayName, isRead,
+                    size);
+}
+
+NS_IMETHODIMP CarbonioMessageListListener::OnSuccess() {
+  return mOnSuccess();
+}
+
+NS_IMETHODIMP CarbonioMessageListListener::OnOperationFailure(
+    nsresult status) {
+  return mOnError(status);
+}

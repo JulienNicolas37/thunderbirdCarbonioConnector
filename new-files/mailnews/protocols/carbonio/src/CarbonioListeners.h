@@ -105,4 +105,38 @@ class CarbonioSimpleListener : public ICarbonioSimpleOperationListener {
   std::function<nsresult(nsresult)> mOnFailure;
 };
 
+/**
+ * Adapts a set of lambda callbacks to `ICarbonioMessageListListener`, so
+ * `CarbonioFolder::GetNewMessages` can express message-list sync handling as
+ * inline closures, same as `CarbonioFolderSyncListener` does for folder
+ * hierarchy sync.
+ */
+class CarbonioMessageListListener : public ICarbonioMessageListListener {
+ public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_ICARBONIOMESSAGELISTLISTENER
+
+  CarbonioMessageListListener(
+      std::function<nsresult(const nsACString&, const nsACString&, int64_t,
+                             const nsACString&, const nsACString&, bool,
+                             uint64_t)>
+          onMessage,
+      std::function<nsresult()> onSuccess,
+      std::function<nsresult(nsresult)> onError)
+      : mOnMessage(std::move(onMessage)),
+        mOnSuccess(std::move(onSuccess)),
+        mOnError(std::move(onError)) {}
+
+ protected:
+  virtual ~CarbonioMessageListListener() = default;
+
+ private:
+  std::function<nsresult(const nsACString&, const nsACString&, int64_t,
+                         const nsACString&, const nsACString&, bool,
+                         uint64_t)>
+      mOnMessage;
+  std::function<nsresult()> mOnSuccess;
+  std::function<nsresult(nsresult)> mOnError;
+};
+
 #endif  // COMM_MAILNEWS_PROTOCOLS_CARBONIO_SRC_CARBONIOLISTENERS_H_
