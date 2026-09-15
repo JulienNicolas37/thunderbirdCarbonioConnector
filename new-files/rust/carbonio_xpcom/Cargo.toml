@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-lock = "3.4.2"
+cstr = "0.2"
 log = "0.4.21"
 moz_http = { version = "0.1.0", path = "../moz_http" }
 moz_task = { version = "0.1.0", path = "../../../xpcom/rust/moz_task" }

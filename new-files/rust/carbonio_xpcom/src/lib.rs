@@ -14,11 +14,13 @@
 //!
 //! The XPCOM bridge below (`XpcomCarbonioBridge`, implementing
 //! `ICarbonioClient`) connects [`client::CarbonioClient`] to
-//! `CarbonioIncomingServer` (C++). Folder hierarchy sync is fully wired up.
-//! `getMessage` is stubbed (`NS_ERROR_NOT_IMPLEMENTED`) pending stream
-//! plumbing to hand raw MIME bytes back across the XPCOM boundary as an
-//! `nsIInputStream` — [`client::CarbonioClient::get_message`] itself works
-//! and is validated, only this last leg of wiring is missing.
+//! `CarbonioIncomingServer` (C++). Folder hierarchy sync, message list sync,
+//! and single-message fetch are all wired up end to end.
+//!
+//! Still missing for a usable read path: a message display protocol/service
+//! (mirroring EWS's `ExchangeService`/`ExchangeProtocolHandler`) so
+//! double-clicking a message actually opens it - `getMessage` delivers the
+//! raw MIME source correctly, but nothing in the C++ layer calls it yet.
 //!
 //! UNVERIFIED: unlike the rest of this crate, this bridge could not be
 //! checked against the real `xpcom`/`moz_task` crates before being handed
@@ -30,9 +32,9 @@ use std::ffi::c_void;
 use std::sync::Arc;
 
 use nserror::{
-    NS_ERROR_ALREADY_INITIALIZED, NS_ERROR_INVALID_ARG, NS_ERROR_NOT_IMPLEMENTED,
-    NS_ERROR_NOT_INITIALIZED, NS_OK, nsresult,
+    NS_ERROR_ALREADY_INITIALIZED, NS_ERROR_INVALID_ARG, NS_ERROR_NOT_INITIALIZED, NS_OK, nsresult,
 };
+use cstr::cstr;
 use nsstring::{nsACString, nsCString, nsString};
 use protocol_shared::{
     client::ProtocolClient,
@@ -43,7 +45,7 @@ use xpcom::{
     RefPtr,
     interfaces::{
         ICarbonioFolderListener, ICarbonioMessageFetchListener, ICarbonioMessageListListener,
-        nsIMsgIncomingServer, nsIURI, nsIUrlListener,
+        nsIMsgIncomingServer, nsIStringInputStream, nsIURI, nsIUrlListener,
     },
     nsIID, xpcom_method,
 };
@@ -216,15 +218,19 @@ impl XpcomCarbonioBridge {
         id: *const nsACString));
     fn get_message(
         &self,
-        _listener: &ICarbonioMessageFetchListener,
-        _id: &nsACString,
+        listener: &ICarbonioMessageFetchListener,
+        id: &nsACString,
     ) -> Result<(), nsresult> {
-        // See the crate-level doc comment: `CarbonioClient::get_message`
-        // itself is implemented and validated, but handing its result back
-        // across the XPCOM boundary as an `nsIInputStream` (matching
-        // `ICarbonioMessageFetchListener::onFetchedDataAvailable`) isn't
-        // wired up yet.
-        Err(NS_ERROR_NOT_IMPLEMENTED)
+        let client = self.client()?;
+        let listener = RefPtr::new(listener);
+        let message_id = id.to_utf8().into_owned();
+
+        moz_task::spawn_local("get_message", async move {
+            deliver_message_fetch(client, listener, message_id).await;
+        })
+        .detach();
+
+        Ok(())
     }
 
     xpcom_method!(sync_messages_for_folder => SyncMessagesForFolder(
@@ -323,6 +329,66 @@ async fn deliver_folder_sync(
     }
 
     report_xpcom_error(unsafe { listener.OnSuccess() }, "OnSuccess");
+}
+
+/// Drives a single message fetch to completion and delivers its raw MIME
+/// content to `listener` as an `nsIInputStream`, following the
+/// start/data/stop callback sequence `ICarbonioMessageFetchListener`
+/// expects.
+async fn deliver_message_fetch(
+    client: Arc<CarbonioClient>,
+    listener: RefPtr<ICarbonioMessageFetchListener>,
+    message_id: String,
+) {
+    log::info!("starting fetch for message {message_id}");
+    report_xpcom_error(unsafe { listener.OnFetchStart() }, "OnFetchStart");
+
+    let result = client.get_message(&message_id).await;
+
+    let message = match result {
+        Ok(message) => message,
+        Err(err) => {
+            log::error!("failed to fetch message {message_id}: {err}");
+            let status: nsresult = (&err).into();
+            report_xpcom_error(unsafe { listener.OnFetchStop(status) }, "OnFetchStop");
+            return;
+        }
+    };
+
+    log::info!(
+        "fetched message {message_id}, handing {} byte(s) of MIME source to the listener",
+        message.raw_mime.len()
+    );
+
+    match create_string_input_stream(&message.raw_mime) {
+        Ok(stream) => {
+            report_xpcom_error(
+                unsafe { listener.OnFetchedDataAvailable(stream.coerce()) },
+                "OnFetchedDataAvailable",
+            );
+            report_xpcom_error(unsafe { listener.OnFetchStop(NS_OK) }, "OnFetchStop");
+            log::debug!("message {message_id} delivered successfully");
+        }
+        Err(status) => {
+            log::error!("failed to create input stream for message {message_id}: {status}");
+            report_xpcom_error(unsafe { listener.OnFetchStop(status) }, "OnFetchStop");
+        }
+    }
+}
+
+/// Wraps `data` in a freshly created `nsIStringInputStream`, ready to be
+/// handed off as an `nsIInputStream` (e.g. via
+/// `ICarbonioMessageFetchListener::OnFetchedDataAvailable`).
+fn create_string_input_stream(data: &str) -> Result<RefPtr<nsIStringInputStream>, nsresult> {
+    let stream = xpcom::create_instance::<nsIStringInputStream>(cstr!(
+        "@mozilla.org/io/string-input-stream;1"
+    ))
+    .ok_or(nserror::NS_ERROR_FAILURE)?;
+
+    let data = nsCString::from(data);
+    unsafe { stream.SetUTF8Data(&*data) }.to_result()?;
+
+    Ok(stream)
 }
 
 /// Drives a folder's message list sync to completion and reports the
