@@ -6,7 +6,10 @@ UNIFIED_SOURCES += [
     "CarbonioFolder.cpp",
     "CarbonioIncomingServer.cpp",
     "CarbonioListeners.cpp",
+    "CarbonioMessageChannel.cpp",
+    "CarbonioProtocolHandler.cpp",
     "CarbonioProtocolInfo.cpp",
+    "CarbonioService.cpp",
 ]
 
 XPCOM_MANIFESTS += [
