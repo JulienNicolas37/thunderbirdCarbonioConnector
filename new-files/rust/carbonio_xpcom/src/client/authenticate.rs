@@ -31,6 +31,7 @@ pub(super) async fn ensure_session(client: &CarbonioClient) -> Result<String> {
         let session = client.session.lock().await;
         if let Some(session) = session.as_ref() {
             if Instant::now() < session.expires_at {
+                log::debug!("using cached session (expires at {:?})", session.expires_at);
                 return Ok(session.token.clone());
             }
         }
@@ -46,9 +47,12 @@ async fn login(client: &CarbonioClient) -> Result<String> {
     // the lock; re-check before making a redundant network request.
     if let Some(session) = session.as_ref() {
         if Instant::now() < session.expires_at {
+            log::debug!("using session established while waiting for the lock");
             return Ok(session.token.clone());
         }
     }
+
+    log::info!("logging in as {}", client.username);
 
     let request = AuthRequestBody {
         auth_request: AuthRequest {
@@ -85,6 +89,8 @@ async fn login(client: &CarbonioClient) -> Result<String> {
         token: token.clone(),
         expires_at,
     });
+
+    log::info!("login succeeded, session valid until {:?}", expires_at);
 
     Ok(token)
 }

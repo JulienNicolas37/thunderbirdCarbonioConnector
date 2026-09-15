@@ -28,6 +28,8 @@ pub struct Message {
 
 /// Fetches the raw RFC822 MIME source of a single message.
 pub(super) async fn get_message(client: &CarbonioClient, message_id: &str) -> Result<Message> {
+    log::info!("fetching message {message_id}");
+
     let token = client.auth_token().await?;
 
     let request = GetMsgRequestBody {
@@ -52,6 +54,11 @@ pub(super) async fn get_message(client: &CarbonioClient, message_id: &str) -> Re
             context: "GetMsgResponse".to_string(),
             details: "no message in response".to_string(),
         })?;
+
+    log::info!(
+        "fetched message {message_id} ({} bytes of raw MIME)",
+        message.content.content.len()
+    );
 
     Ok(Message {
         id: message.id,

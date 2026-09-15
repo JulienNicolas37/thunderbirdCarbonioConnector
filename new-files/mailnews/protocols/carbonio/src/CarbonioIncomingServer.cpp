@@ -377,11 +377,66 @@ NS_IMETHODIMP CarbonioIncomingServer::GetCanSearchMessages(
 NS_IMETHODIMP CarbonioIncomingServer::GetNewMessages(
     nsIMsgFolder* aFolder, nsIMsgWindow* aMsgWindow,
     nsIUrlListener* aUrlListener) {
-  // Phase 1 scope: syncing the folder hierarchy is as far as this goes for
-  // now. Per-folder message sync (mirroring EWS's `SyncAllFolders`/
-  // `SyncFolders`) is the next piece of work once this compiles and folder
-  // hierarchy sync is confirmed working end to end.
-  return SyncFolderList(aMsgWindow, []() { return NS_OK; });
+  nsCOMPtr<nsIMsgFolder> folder = aFolder;
+  nsCOMPtr<nsIMsgWindow> window = aMsgWindow;
+
+  // Sync the folder hierarchy first, then the message list(s) - mirrors
+  // EWS's ExchangeIncomingServer::GetNewMessages.
+  return SyncFolderList(aMsgWindow, [self = RefPtr(this), folder, window]() {
+    bool isServer = false;
+    if (folder) {
+      nsresult rv = folder->GetIsServer(&isServer);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    if (isServer || !folder) {
+      // "Get Messages" was triggered for the whole account (or with no
+      // specific folder) - the intent is to synchronize every folder, not
+      // just the one that happened to be selected.
+      return self->SyncAllFolders();
+    }
+
+    // Triggered for a specific folder - synchronize just that one.
+    return folder->GetNewMessages(window, nullptr);
+  });
+}
+
+nsresult CarbonioIncomingServer::SyncAllFolders() {
+  RefPtr<nsIMsgFolder> root;
+  nsresult rv = GetRootFolder(getter_AddRefs(root));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsTArray<RefPtr<nsIMsgFolder>> foldersToVisit;
+  foldersToVisit.AppendElement(root);
+
+  while (foldersToVisit.Length() != 0) {
+    nsTArray<RefPtr<nsIMsgFolder>> nextFoldersToVisit;
+
+    for (auto& folder : foldersToVisit) {
+      bool isServer = false;
+      rv = folder->GetIsServer(&isServer);
+      if (NS_SUCCEEDED(rv) && !isServer) {
+        // Best-effort: a failure syncing one folder shouldn't stop the
+        // others from being attempted.
+        rv = folder->GetNewMessages(nullptr, nullptr);
+        if (NS_FAILED(rv)) {
+          NS_WARNING(
+              "CarbonioIncomingServer::SyncAllFolders: GetNewMessages "
+              "failed for a folder");
+        }
+      }
+
+      nsTArray<RefPtr<nsIMsgFolder>> subfolders;
+      rv = folder->GetSubFolders(subfolders);
+      if (NS_SUCCEEDED(rv)) {
+        nextFoldersToVisit.AppendElements(subfolders);
+      }
+    }
+
+    foldersToVisit = std::move(nextFoldersToVisit);
+  }
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP CarbonioIncomingServer::Shutdown() {

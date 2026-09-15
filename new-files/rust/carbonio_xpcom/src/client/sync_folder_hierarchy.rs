@@ -64,6 +64,8 @@ pub(super) async fn sync_folder_hierarchy(
     client: &CarbonioClient,
     previous_sync_token: Option<String>,
 ) -> Result<SyncResult> {
+    log::debug!("starting folder hierarchy sync (previous_sync_token: {previous_sync_token:?})");
+
     let token = client.auth_token().await?;
 
     let request = SyncRequestBody {

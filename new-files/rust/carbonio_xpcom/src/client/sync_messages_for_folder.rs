@@ -49,12 +49,14 @@ pub(super) async fn sync_messages_for_folder(
     client: &CarbonioClient,
     folder_id: &str,
 ) -> Result<MessageListResult> {
+    log::info!("starting message list sync for folder {folder_id}");
+
     let token = client.auth_token().await?;
 
     let mut messages = Vec::new();
     let mut offset = 0u32;
 
-    for _ in 0..MAX_PAGES {
+    for page in 0..MAX_PAGES {
         let request = SearchRequestBody {
             search_request: SearchRequest {
                 jsns: "urn:zimbraMail",
@@ -71,6 +73,11 @@ pub(super) async fn sync_messages_for_folder(
 
         let search_response = response.search_response;
         let page_len = search_response.m.len();
+
+        log::debug!(
+            "folder {folder_id}: page {page} returned {page_len} message(s) (more: {})",
+            search_response.more
+        );
 
         messages.extend(search_response.m.into_iter().map(to_summary));
 

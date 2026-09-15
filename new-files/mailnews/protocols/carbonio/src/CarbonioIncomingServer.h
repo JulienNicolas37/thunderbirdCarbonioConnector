@@ -102,6 +102,14 @@ class CarbonioIncomingServer : public nsMsgIncomingServer,
   nsresult SyncFolderList(nsIMsgWindow* aMsgWindow,
                           std::function<nsresult()> postSyncCallback);
 
+  /**
+   * Synchronizes the message list for every mail folder in the account.
+   * Called when "Get Messages" is triggered at the account level, rather
+   * than for one specific folder. Best-effort: a failure on one folder
+   * doesn't stop the others from being attempted.
+   */
+  nsresult SyncAllFolders();
+
   RefPtr<ICarbonioClient> mClient;
 };
 
