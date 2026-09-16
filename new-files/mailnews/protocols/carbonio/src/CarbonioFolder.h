@@ -60,6 +60,19 @@ constexpr auto kCarbonioMsgIdProperty = "carbonioMsgId";
  * trigger point for message list sync (mirroring
  * `CarbonioIncomingServer::GetNewMessages`, which only syncs the folder
  * hierarchy, not message content).
+ *
+ * CAUTION (confirmed the hard way via targeted debug logging): do not
+ * declare a member named `mBaseMessageURI` on this class. `nsMsgDBFolder`
+ * already has a protected member of that exact name, which
+ * `CreateBaseMessageURI()` is meant to populate and which
+ * `GetBaseMessageURI()`/`GenerateMessageURI()`/`GetUriForMsg()` read from -
+ * redeclaring it here creates a second, shadowing member that this class's
+ * own code writes to (since unqualified name lookup resolves to the most
+ * derived scope), while the base class's methods keep reading the real,
+ * never-populated one. Symptom: message URIs come back as a bare `#<key>`
+ * with no scheme/host at all, since the base class's copy stays empty
+ * forever - `GetBaseMessageURI()` then reports it as empty even though this
+ * class's own logging shows a correctly-set value.
  */
 class CarbonioFolder : public nsMsgDBFolder {
  public:
@@ -70,10 +83,6 @@ class CarbonioFolder : public nsMsgDBFolder {
   NS_IMETHOD GetSubFolders(nsTArray<RefPtr<nsIMsgFolder>>& folders) override;
   NS_IMETHOD GetNewMessages(nsIMsgWindow* aWindow,
                             nsIUrlListener* aListener) override;
-  // TEMPORARY DIAGNOSTIC
-  NS_IMETHOD GenerateMessageURI(nsMsgKey msgKey, nsACString& _retval) override;
-  NS_IMETHOD GetUriForMsg(nsIMsgDBHdr* msgHdr, nsACString& _retval) override;
-  NS_IMETHOD GetBaseMessageURI(nsACString& baseMessageURI) override;
 
  protected:
   virtual ~CarbonioFolder();
@@ -115,7 +124,6 @@ class CarbonioFolder : public nsMsgDBFolder {
                                const nsACString& fromDisplayName, bool isRead,
                                uint64_t size);
 
-  nsCString mBaseMessageURI;
   bool mHasLoadedSubfolders = false;
 };
 
