@@ -4,6 +4,7 @@
 
 #include "CarbonioMessageChannel.h"
 
+#include "CarbonioFolder.h"
 #include "CarbonioIncomingServer.h"
 #include "CarbonioListeners.h"
 #include "ICarbonioClient.h"
@@ -23,7 +24,8 @@
 
 // Local property recording the Carbonio id of a message, mirrors
 // `kCarbonioIdProperty` for folders (see `CarbonioIncomingServer.h`).
-constexpr auto kCarbonioMsgIdProperty = "carbonioMsgId";
+// Declared in `CarbonioFolder.h` (where it's used to tag message headers);
+// reused here via that header rather than redeclared.
 
 NS_IMPL_ISUPPORTS_INHERITED(CarbonioMessageChannel, nsHashPropertyBag,
                             nsIMailChannel, nsIChannel, nsIRequest)
@@ -402,7 +404,7 @@ nsresult CarbonioMessageChannel::DownloadMessageAndReadFromStore(
   };
 
   auto onFetchStop = [self, folderRef, msgStoreRef, outputStreamRef, consumer,
-                      hdrRef](nsresult status) {
+                      hdrRef](nsresult status, uint64_t bytesWritten) {
     if (NS_FAILED(status)) {
       msgStoreRef->DiscardNewMessage(folderRef, outputStreamRef);
       consumer->OnStartRequest(self);
