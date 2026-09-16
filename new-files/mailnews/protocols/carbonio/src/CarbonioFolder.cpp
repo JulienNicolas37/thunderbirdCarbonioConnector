@@ -29,16 +29,27 @@ CarbonioFolder::CarbonioFolder() = default;
 CarbonioFolder::~CarbonioFolder() = default;
 
 nsresult CarbonioFolder::CreateBaseMessageURI(const nsACString& aURI) {
+  // TEMPORARY DIAGNOSTIC
+  fprintf(stderr, "[carbonio-debug] CreateBaseMessageURI called with aURI=%s\n",
+          nsCString(aURI).get());
+  fflush(stderr);
+
   nsCOMPtr<nsIURI> folderUri;
   nsresult rv =
       NS_NewURI(getter_AddRefs(folderUri), PromiseFlatCString(aURI).Data());
+  fprintf(stderr, "[carbonio-debug] NS_NewURI rv=%08x\n", uint32_t(rv));
+  fflush(stderr);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString scheme;
   rv = folderUri->GetScheme(scheme);
   NS_ENSURE_SUCCESS(rv, rv);
+  fprintf(stderr, "[carbonio-debug] scheme=%s\n", scheme.get());
+  fflush(stderr);
 
   if (!scheme.EqualsLiteral("carbonio")) {
+    fprintf(stderr, "[carbonio-debug] scheme mismatch, bailing\n");
+    fflush(stderr);
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -53,6 +64,10 @@ nsresult CarbonioFolder::CreateBaseMessageURI(const nsACString& aURI) {
 
   mBaseMessageURI = kCarbonioMessageRootURI;
   mBaseMessageURI += tailURI;
+
+  fprintf(stderr, "[carbonio-debug] mBaseMessageURI set to: %s\n",
+          mBaseMessageURI.get());
+  fflush(stderr);
 
   return NS_OK;
 }
