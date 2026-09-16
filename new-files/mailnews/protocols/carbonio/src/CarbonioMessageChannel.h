@@ -10,6 +10,7 @@
 #include "nsIMailChannel.h"
 #include "nsIMsgHdr.h"
 #include "nsMailChannel.h"
+#include "nsTHashSet.h"
 #include "mozilla/dom/ParentProcessChannelHandle.h"
 
 /**
@@ -83,6 +84,12 @@ class CarbonioMessageChannel : public nsMailChannel,
   bool mPending;
   nsresult mStatus;
   RefPtr<mozilla::dom::ParentProcessChannelHandle> mParentProcessChannelHandle;
+
+  // Tracks Carbonio message ids currently being downloaded-and-cached (see
+  // `DownloadMessageAndReadFromStore`), to guard against two overlapping
+  // downloads for the same message racing on the same folder's
+  // `GetNewMsgOutputStream`. Main-thread only, like everything else here.
+  static nsTHashSet<nsCString> sInProgressDownloads;
 };
 
 #endif  // COMM_MAILNEWS_PROTOCOLS_CARBONIO_SRC_CARBONIOMESSAGECHANNEL_H_

@@ -8,6 +8,7 @@
 #include "CarbonioIncomingServer.h"
 #include "CarbonioListeners.h"
 #include "ICarbonioClient.h"
+#include "mozilla/ScopeExit.h"
 #include "nsContentSecurityManager.h"
 #include "nsIInputStream.h"
 #include "nsIMsgFolder.h"
@@ -21,6 +22,9 @@
 #include "nsMsgUtils.h"
 #include "nsNetUtil.h"
 #include "OfflineStorage.h"
+
+// static
+nsTHashSet<nsCString> CarbonioMessageChannel::sInProgressDownloads;
 
 // Local property recording the Carbonio id of a message, mirrors
 // `kCarbonioIdProperty` for folders (see `CarbonioIncomingServer.h`).
@@ -367,6 +371,23 @@ nsresult CarbonioMessageChannel::DownloadMessageAndReadFromStore(
   nsCString carbonioMsgId;
   MOZ_TRY(mHdr->GetStringProperty(kCarbonioMsgIdProperty, carbonioMsgId));
 
+  // Guard against overlapping downloads of the same message (observed in
+  // practice: the reading pane and an explicitly opened tab can both
+  // trigger AsyncOpen for the same message close together). Without this,
+  // two concurrent downloads each call GetNewMsgOutputStream for the same
+  // folder, and the second implicitly invalidates the first's stream,
+  // failing it with NS_BASE_STREAM_CLOSED - which was in turn triggering
+  // automatic reload attempts, compounding into a runaway retry storm.
+  if (sInProgressDownloads.Contains(carbonioMsgId)) {
+    NS_WARNING(
+        "CarbonioMessageChannel: a download for this message is already in "
+        "progress; not starting a duplicate");
+    return NS_ERROR_IN_PROGRESS;
+  }
+  sInProgressDownloads.Insert(carbonioMsgId);
+  auto downloadGuard = mozilla::MakeScopeExit(
+      [carbonioMsgId] { sInProgressDownloads.Remove(carbonioMsgId); });
+
   nsCOMPtr<nsIMsgPluggableStore> msgStore;
   MOZ_TRY(folder->GetMsgStore(getter_AddRefs(msgStore)));
 
@@ -404,7 +425,8 @@ nsresult CarbonioMessageChannel::DownloadMessageAndReadFromStore(
   };
 
   auto onFetchStop = [self, folderRef, msgStoreRef, outputStreamRef, consumer,
-                      hdrRef](nsresult status, uint64_t bytesWritten) {
+                      hdrRef, guard = std::move(downloadGuard)](
+                         nsresult status, uint64_t bytesWritten) {
     if (NS_FAILED(status)) {
       msgStoreRef->DiscardNewMessage(folderRef, outputStreamRef);
       consumer->OnStartRequest(self);
