@@ -8,7 +8,6 @@
 #include "CarbonioIncomingServer.h"
 #include "CarbonioListeners.h"
 #include "ICarbonioClient.h"
-#include "mozilla/ScopeExit.h"
 #include "nsContentSecurityManager.h"
 #include "nsIInputStream.h"
 #include "nsIMsgFolder.h"
@@ -384,15 +383,17 @@ nsresult CarbonioMessageChannel::DownloadMessageAndReadFromStore(
         "progress; not starting a duplicate");
     return NS_ERROR_IN_PROGRESS;
   }
-  sInProgressDownloads.Insert(carbonioMsgId);
-  auto downloadGuard = mozilla::MakeScopeExit(
-      [carbonioMsgId] { sInProgressDownloads.Remove(carbonioMsgId); });
 
   nsCOMPtr<nsIMsgPluggableStore> msgStore;
   MOZ_TRY(folder->GetMsgStore(getter_AddRefs(msgStore)));
 
   nsCOMPtr<nsIOutputStream> outputStream;
   MOZ_TRY(msgStore->GetNewMsgOutputStream(folder, getter_AddRefs(outputStream)));
+
+  // Only mark as in-progress once nothing else can fail before the actual
+  // async dispatch below - otherwise a MOZ_TRY failure between here and
+  // there would leave this message id stuck as "in progress" forever.
+  sInProgressDownloads.Insert(carbonioMsgId);
 
   RefPtr<CarbonioMessageChannel> self(this);
   nsCOMPtr<nsIMsgFolder> folderRef(folder);
@@ -425,8 +426,12 @@ nsresult CarbonioMessageChannel::DownloadMessageAndReadFromStore(
   };
 
   auto onFetchStop = [self, folderRef, msgStoreRef, outputStreamRef, consumer,
-                      hdrRef, guard = std::move(downloadGuard)](
-                         nsresult status, uint64_t bytesWritten) {
+                      hdrRef, carbonioMsgId](nsresult status,
+                                             uint64_t bytesWritten) {
+    // Always release the in-progress marker set before dispatching the
+    // download, regardless of which path below is taken.
+    sInProgressDownloads.Remove(carbonioMsgId);
+
     if (NS_FAILED(status)) {
       msgStoreRef->DiscardNewMessage(folderRef, outputStreamRef);
       consumer->OnStartRequest(self);
@@ -458,5 +463,12 @@ nsresult CarbonioMessageChannel::DownloadMessageAndReadFromStore(
   RefPtr<CarbonioMessageFetchListener> listener = new CarbonioMessageFetchListener(
       onFetchStart, onFetchedDataAvailable, onFetchStop);
 
-  return client->GetMessage(listener, carbonioMsgId);
+  nsresult rv = client->GetMessage(listener, carbonioMsgId);
+  if (NS_FAILED(rv)) {
+    // onFetchStop will never run in this case, so release the marker here
+    // instead - otherwise this message id would be stuck as "in progress"
+    // forever.
+    sInProgressDownloads.Remove(carbonioMsgId);
+  }
+  return rv;
 }
