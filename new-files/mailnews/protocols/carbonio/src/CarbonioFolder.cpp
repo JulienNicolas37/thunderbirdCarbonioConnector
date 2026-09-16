@@ -29,9 +29,8 @@ CarbonioFolder::CarbonioFolder() = default;
 CarbonioFolder::~CarbonioFolder() = default;
 
 nsresult CarbonioFolder::CreateBaseMessageURI(const nsACString& aURI) {
-  // TEMPORARY DIAGNOSTIC
-  fprintf(stderr, "[carbonio-debug] CreateBaseMessageURI called with aURI=%s\n",
-          nsCString(aURI).get());
+  fprintf(stderr, "[carbonio-debug] CreateBaseMessageURI called on this=%p with aURI=%s\n",
+          static_cast<void*>(this), nsCString(aURI).get());
   fflush(stderr);
 
   nsCOMPtr<nsIURI> folderUri;
@@ -69,6 +68,23 @@ nsresult CarbonioFolder::CreateBaseMessageURI(const nsACString& aURI) {
           mBaseMessageURI.get());
   fflush(stderr);
 
+  return NS_OK;
+}
+
+// TEMPORARY DIAGNOSTIC: confirm whether the folder object queried when a
+// message is opened is the same one (same `this`) whose
+// CreateBaseMessageURI logged a correctly-set mBaseMessageURI at startup.
+NS_IMETHODIMP CarbonioFolder::GetBaseMessageURI(nsACString& baseMessageURI) {
+  nsAutoCString name;
+  GetName(name);
+  fprintf(stderr,
+          "[carbonio-debug] GetBaseMessageURI called on this=%p (name=%s) "
+          "mBaseMessageURI=%s\n",
+          static_cast<void*>(this), name.get(), mBaseMessageURI.get());
+  fflush(stderr);
+
+  if (mBaseMessageURI.IsEmpty()) return NS_ERROR_FAILURE;
+  baseMessageURI = mBaseMessageURI;
   return NS_OK;
 }
 
