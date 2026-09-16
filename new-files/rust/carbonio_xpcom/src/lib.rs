@@ -362,12 +362,29 @@ async fn deliver_message_fetch(
 
     match create_string_input_stream(&message.raw_mime) {
         Ok(stream) => {
-            report_xpcom_error(
-                unsafe { listener.OnFetchedDataAvailable(stream.coerce()) },
-                "OnFetchedDataAvailable",
-            );
-            report_xpcom_error(unsafe { listener.OnFetchStop(NS_OK) }, "OnFetchStop");
-            log::debug!("message {message_id} delivered successfully");
+            let data_status = unsafe { listener.OnFetchedDataAvailable(stream.coerce()) };
+            report_xpcom_error(data_status, "OnFetchedDataAvailable");
+
+            // Propagate a failure from the data-writing step itself, rather
+            // than unconditionally reporting success regardless of whether
+            // the listener actually managed to consume the data - confirmed
+            // to matter empirically: without this, a write failure (e.g.
+            // NS_BASE_STREAM_CLOSED) was masked as success, leading the C++
+            // side to proceed as if the message had been cached, which it
+            // hadn't.
+            let stop_status = match data_status.to_result() {
+                Ok(()) => NS_OK,
+                Err(err) => err,
+            };
+            report_xpcom_error(unsafe { listener.OnFetchStop(stop_status) }, "OnFetchStop");
+
+            if stop_status == NS_OK {
+                log::debug!("message {message_id} delivered successfully");
+            } else {
+                log::error!(
+                    "message {message_id}: data delivery failed ({stop_status}), reported as failure"
+                );
+            }
         }
         Err(status) => {
             log::error!("failed to create input stream for message {message_id}: {status}");
