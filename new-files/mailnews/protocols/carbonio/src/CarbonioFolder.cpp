@@ -88,6 +88,30 @@ nsresult CarbonioFolder::GetDatabase() {
   return NS_OK;
 }
 
+NS_IMETHODIMP CarbonioFolder::GenerateMessageURI(nsMsgKey msgKey,
+                                                  nsACString& _retval) {
+  nsresult rv = nsMsgDBFolder::GenerateMessageURI(msgKey, _retval);
+  fprintf(stderr,
+          "[carbonio-debug] GenerateMessageURI(msgKey=%u) this=%p "
+          "mBaseMessageURI=%s -> rv=%08x result=%s\n",
+          uint32_t(msgKey), static_cast<void*>(this), mBaseMessageURI.get(),
+          uint32_t(rv), nsCString(_retval).get());
+  fflush(stderr);
+  return rv;
+}
+
+NS_IMETHODIMP CarbonioFolder::GetUriForMsg(nsIMsgDBHdr* msgHdr,
+                                           nsACString& _retval) {
+  nsresult rv = nsMsgDBFolder::GetUriForMsg(msgHdr, _retval);
+  fprintf(stderr,
+          "[carbonio-debug] GetUriForMsg this=%p mBaseMessageURI=%s -> "
+          "rv=%08x result=%s\n",
+          static_cast<void*>(this), mBaseMessageURI.get(), uint32_t(rv),
+          nsCString(_retval).get());
+  fflush(stderr);
+  return rv;
+}
+
 NS_IMETHODIMP CarbonioFolder::GetIncomingServerType(
     nsACString& aIncomingServerType) {
   aIncomingServerType.AssignLiteral("carbonio");
