@@ -73,6 +73,7 @@ class CarbonioFolder : public nsMsgDBFolder {
   // TEMPORARY DIAGNOSTIC
   NS_IMETHOD GenerateMessageURI(nsMsgKey msgKey, nsACString& _retval) override;
   NS_IMETHOD GetUriForMsg(nsIMsgDBHdr* msgHdr, nsACString& _retval) override;
+  NS_IMETHOD GetBaseMessageURI(nsACString& baseMessageURI) override;
 
  protected:
   virtual ~CarbonioFolder();

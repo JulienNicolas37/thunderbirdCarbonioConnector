@@ -112,6 +112,17 @@ NS_IMETHODIMP CarbonioFolder::GetUriForMsg(nsIMsgDBHdr* msgHdr,
   return rv;
 }
 
+NS_IMETHODIMP CarbonioFolder::GetBaseMessageURI(nsACString& baseMessageURI) {
+  nsresult rv = nsMsgDBFolder::GetBaseMessageURI(baseMessageURI);
+  fprintf(stderr,
+          "[carbonio-debug] GetBaseMessageURI this=%p mBaseMessageURI(member)=%s "
+          "-> rv=%08x baseMessageURI(out)=%s\n",
+          static_cast<void*>(this), mBaseMessageURI.get(), uint32_t(rv),
+          nsCString(baseMessageURI).get());
+  fflush(stderr);
+  return rv;
+}
+
 NS_IMETHODIMP CarbonioFolder::GetIncomingServerType(
     nsACString& aIncomingServerType) {
   aIncomingServerType.AssignLiteral("carbonio");
