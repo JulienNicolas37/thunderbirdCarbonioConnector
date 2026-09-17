@@ -243,10 +243,10 @@ NS_IMETHODIMP CarbonioMessageChannel::Open(nsIInputStream** _retval) {
 NS_IMETHODIMP CarbonioMessageChannel::AsyncOpen(nsIStreamListener* aListener) {
   // TEMPORARY DIAGNOSTIC
   static int sCallCount = 0;
-  nsCString spec;
-  if (mURI) mURI->GetSpec(spec);
+  nsCString debugSpec;
+  if (mURI) mURI->GetSpec(debugSpec);
   fprintf(stderr, "[carbonio-debug] AsyncOpen call #%d this=%p uri=%s\n",
-          ++sCallCount, static_cast<void*>(this), spec.get());
+          ++sCallCount, static_cast<void*>(this), debugSpec.get());
   fflush(stderr);
 
   mPending = false;
