@@ -42,6 +42,14 @@ NS_IMETHODIMP CarbonioService::LoadMessage(const nsACString& aMessageURI,
                                            nsIMsgWindow* aMsgWindow,
                                            nsIUrlListener* aUrlListener,
                                            bool aAutodetectCharset) {
+  // TEMPORARY DIAGNOSTIC
+  static int sCallCount = 0;
+  fprintf(stderr,
+          "[carbonio-debug] LoadMessage call #%d, uri=%s, aUrlListener=%p\n",
+          ++sCallCount, nsCString(aMessageURI).get(),
+          static_cast<void*>(aUrlListener));
+  fflush(stderr);
+
   NS_ENSURE_ARG_POINTER(aDisplayConsumer);
 
   nsCOMPtr<nsIURI> channelURI;

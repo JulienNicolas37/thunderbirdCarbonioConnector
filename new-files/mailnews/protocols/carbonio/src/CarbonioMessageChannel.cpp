@@ -241,6 +241,14 @@ NS_IMETHODIMP CarbonioMessageChannel::Open(nsIInputStream** _retval) {
 }
 
 NS_IMETHODIMP CarbonioMessageChannel::AsyncOpen(nsIStreamListener* aListener) {
+  // TEMPORARY DIAGNOSTIC
+  static int sCallCount = 0;
+  nsCString spec;
+  if (mURI) mURI->GetSpec(spec);
+  fprintf(stderr, "[carbonio-debug] AsyncOpen call #%d this=%p uri=%s\n",
+          ++sCallCount, static_cast<void*>(this), spec.get());
+  fflush(stderr);
+
   mPending = false;
 
   nsCOMPtr<nsIStreamListener> listener = aListener;
