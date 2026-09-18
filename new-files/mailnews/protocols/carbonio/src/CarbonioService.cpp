@@ -144,8 +144,23 @@ NS_IMETHODIMP CarbonioService::StreamHeaders(const nsACString& aMessageURI,
                                              nsIUrlListener* aUrlListener,
                                              bool aLocalOnly,
                                              nsIURI** _retval) {
-  NS_WARNING("CarbonioService::StreamHeaders: not implemented in phase 1");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  // Confirmed empirically (comparison against EWS's own working call
+  // pattern for opening a message): the reading pane calls this in
+  // addition to loadMessage/streamMessage, and previously getting an
+  // immediate synchronous failure back from it seemingly caused the caller
+  // to consider the whole open attempt failed and retry from scratch -
+  // matching the infinite retry loop observed before this fix. Phase 1
+  // doesn't distinguish "headers only" from the full message (our store
+  // already has the whole thing cached by this point either way), so this
+  // just delegates to the same fetch path as StreamMessage.
+  NS_ENSURE_ARG_POINTER(aConsumer);
+
+  nsCOMPtr<nsIURI> channelURI;
+  MOZ_TRY(GetUrlForUri(aMessageURI, nullptr, getter_AddRefs(channelURI)));
+
+  NS_IF_ADDREF(*_retval = channelURI);
+
+  return FetchMessage(channelURI, aConsumer);
 }
 
 NS_IMETHODIMP CarbonioService::IsMsgInMemCache(nsIURI* aUrl,
