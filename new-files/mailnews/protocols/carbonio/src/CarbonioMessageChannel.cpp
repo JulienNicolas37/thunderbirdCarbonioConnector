@@ -4,6 +4,8 @@
 
 #include "CarbonioMessageChannel.h"
 
+#include <unistd.h>
+
 #include "CarbonioFolder.h"
 #include "CarbonioIncomingServer.h"
 #include "CarbonioListeners.h"
@@ -245,8 +247,8 @@ NS_IMETHODIMP CarbonioMessageChannel::AsyncOpen(nsIStreamListener* aListener) {
   static int sCallCount = 0;
   nsCString debugSpec;
   if (mURI) mURI->GetSpec(debugSpec);
-  fprintf(stderr, "[carbonio-debug] AsyncOpen call #%d this=%p uri=%s\n",
-          ++sCallCount, static_cast<void*>(this), debugSpec.get());
+  fprintf(stderr, "[carbonio-debug] AsyncOpen call #%d, pid=%d this=%p uri=%s\n",
+          ++sCallCount, getpid(), static_cast<void*>(this), debugSpec.get());
   fflush(stderr);
 
   mPending = false;

@@ -4,6 +4,8 @@
 
 #include "CarbonioService.h"
 
+#include <unistd.h>
+
 #include "mozilla/Components.h"
 #include "nsContentUtils.h"
 #include "nsDocShellLoadState.h"
@@ -45,8 +47,8 @@ NS_IMETHODIMP CarbonioService::LoadMessage(const nsACString& aMessageURI,
   // TEMPORARY DIAGNOSTIC
   static int sCallCount = 0;
   fprintf(stderr,
-          "[carbonio-debug] LoadMessage call #%d, uri=%s, aUrlListener=%p\n",
-          ++sCallCount, nsCString(aMessageURI).get(),
+          "[carbonio-debug] LoadMessage call #%d, pid=%d, uri=%s, aUrlListener=%p\n",
+          ++sCallCount, getpid(), nsCString(aMessageURI).get(),
           static_cast<void*>(aUrlListener));
   fflush(stderr);
 
