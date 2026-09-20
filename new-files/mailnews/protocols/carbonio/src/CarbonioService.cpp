@@ -17,7 +17,8 @@
 #include "nsMsgUtils.h"
 #include "nsNetUtil.h"
 
-NS_IMPL_ISUPPORTS(CarbonioService, nsIMsgMessageService)
+NS_IMPL_ISUPPORTS(CarbonioService, nsIMsgMessageService,
+                  nsIMsgMessageFetchPartService)
 
 CarbonioService::CarbonioService() = default;
 CarbonioService::~CarbonioService() = default;
@@ -139,6 +140,38 @@ NS_IMETHODIMP CarbonioService::StreamMessage(
   NS_IF_ADDREF(*_retval = channelURI);
 
   return FetchMessage(channelURI, aStreamListener);
+}
+
+// nsIMsgMessageFetchPartService
+NS_IMETHODIMP CarbonioService::FetchMimePart(nsIURI* aURI,
+                                             const nsACString& aMessageUri,
+                                             nsIStreamListener* aStreamListener,
+                                             nsIMsgWindow* aMsgWindow,
+                                             nsIUrlListener* aUrlListener,
+                                             nsIURI** _retval) {
+  // TEMPORARY DIAGNOSTIC
+  fprintf(stderr, "[carbonio-debug] FetchMimePart called! uri=%s\n",
+          nsCString(aMessageUri).get());
+  fflush(stderr);
+
+  // Mirrors ExchangeService::FetchMimePart. `aURI` is already resolved to
+  // our own "x-moz-carbonio" scheme by the caller (e.g. libmime fetching an
+  // individual part of a multipart message during rendering), so no further
+  // URI conversion is needed here, unlike the other entry points above
+  // which start from a "carbonio-message" URI and must call GetUrlForUri()
+  // themselves.
+  NS_ENSURE_ARG_POINTER(aURI);
+  NS_ENSURE_ARG_POINTER(aStreamListener);
+
+  nsCString scheme;
+  MOZ_TRY(aURI->GetScheme(scheme));
+  MOZ_ASSERT(scheme.EqualsLiteral("x-moz-carbonio"),
+             "the URI passed to FetchMimePart does not follow the expected "
+             "format");
+
+  NS_IF_ADDREF(*_retval = aURI);
+
+  return FetchMessage(aURI, aStreamListener);
 }
 
 NS_IMETHODIMP CarbonioService::StreamHeaders(const nsACString& aMessageURI,

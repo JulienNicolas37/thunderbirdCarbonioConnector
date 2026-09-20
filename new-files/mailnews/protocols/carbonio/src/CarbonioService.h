@@ -12,16 +12,17 @@
  * agnostic, UI-facing entry point for message actions (displaying,
  * streaming, ...).
  *
- * Modeled after EWS's `ExchangeService`, trimmed for phase 1: no
- * `nsIMsgMessageFetchPartService` (attachment/mime-part fetching), and
- * `CopyMessage(s)`/`SaveMessageToDisk`/`Search`/`StreamHeaders`/
- * `IsMsgInMemCache` are explicit `NS_ERROR_NOT_IMPLEMENTED` stubs (phase 1
- * is read-only display, not copy/move/search).
+ * Modeled after EWS's `ExchangeService`. `CopyMessage(s)`/
+ * `SaveMessageToDisk`/`Search`/`StreamHeaders`/`IsMsgInMemCache` are explicit
+ * `NS_ERROR_NOT_IMPLEMENTED` stubs (phase 1 is read-only display, not
+ * copy/move/search).
  */
-class CarbonioService : public nsIMsgMessageService {
+class CarbonioService : public nsIMsgMessageService,
+                        public nsIMsgMessageFetchPartService {
  public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIMSGMESSAGESERVICE
+  NS_DECL_NSIMSGMESSAGEFETCHPARTSERVICE
 
   CarbonioService();
 
