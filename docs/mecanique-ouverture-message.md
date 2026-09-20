@@ -186,10 +186,24 @@ NS_ERROR_DOCUMENT_LOAD_LISTENER_NO_PARENT_CHANNEL = 0x804B004F
 
 (confirmé via le fichier généré `ErrorList.h`)
 
-Ce nom est extrêmement parlant : il vient très probablement de
-`netwerk/ipc/DocumentLoadListener.cpp`, et signifie que **quelque chose essaie
-de référencer "le vrai canal" après que `DocumentLoadListener` en a déjà perdu
-la trace**.
+**Cause identifiée avec certitude, via résolution de pile d'appel complète
+(`MozWalkTheStack` + `addr2line` sur le binaire de debug local) :**
+
+```
+mozilla::net::DocumentLoadListener::TriggerRedirectToRealChannel(...)
+  → vérifie un Maybe<...>::isSome() → false
+  → CarbonioMessageChannel::Cancel(NS_ERROR_DOCUMENT_LOAD_LISTENER_NO_PARENT_CHANNEL)
+  → mReadRequest->Cancel(...) (notre nsInputStreamPump)
+  → OfflineMessageReadListener::OnStopRequest (échec)
+  → notre SpyStreamListener::OnStopRequest (échec, aucune donnée jamais livrée)
+```
+
+C'est bien `DocumentLoadListener::TriggerRedirectToRealChannel` — la fonction qui
+remplace le canal placeholder par le "vrai" canal — qui **annule elle-même
+notre canal**, parce qu'une vérification interne (`Maybe<T>::isSome()`, juste
+avant l'appel à `Cancel`) échoue : une référence qu'elle attend de trouver
+encore valide à ce stade est absente. C'est précisément l'origine du nom
+`NO_PARENT_CHANNEL`.
 
 **Conséquence côté UI** : le panneau de lecture ne recevant jamais rien,
 `aboutMessage.js` relance `loadMessage()` depuis le tout début (étape 1) avec un
@@ -202,6 +216,14 @@ toujours dans le processus parent.
 `AsyncOpen`, plusieurs processus par clic), mais elle **se termine proprement** :
 `OnDataAvailable` est bien appelé, `DocumentLoadListener` garde la référence
 jusqu'au bout, et la boucle ne se déclenche pas.
+
+**Ce qu'il reste à comprendre** : *pourquoi* cette référence est absente
+spécifiquement pour notre canal, alors que la structure du code (interfaces,
+enregistrement, `LoadInfo`, type de contenu...) est identique à EWS sur tous
+les points vérifiables statiquement. La réponse est probablement dans le code
+source exact de `TriggerRedirectToRealChannel`
+(`netwerk/ipc/DocumentLoadListener.cpp`), qu'on n'a pas pu consulter en détail
+depuis l'extérieur — c'est le point précis à poser à la communauté.
 
 ---
 
@@ -224,6 +246,7 @@ Liste des hypothèses testées et **infirmées**, pour ne pas les reprendre :
 | `nsIParentRedirectingChannel`/`nsIRedirectResultListener`/`nsIAsyncVerifyRedirectCallback` non implémentées | Recherche dans le code EWS | **EWS ne les implémente pas non plus** |
 | Méthode manquante sur `CarbonioMessageChannel` par rapport à `ExchangeMessageChannel` | Diff exhaustif de toutes les méthodes implémentées | **Aucune différence** |
 | `FetchMimePart`/`nsIMsgMessageFetchPartService` manquante sur `CarbonioService` | Diff exhaustif + implémentation + log d'appel | Manquait réellement (lacune comblée), mais **jamais appelée pendant l'ouverture d'un message** — pas la cause |
+| Confusion sur l'origine réelle de l'échec (canal enfant vs canal principal, `DocumentLoadListener` vs autre) | Pile d'appel complète capturée (`MozWalkTheStack`) et résolue (`addr2line`) aux points clés (`Cancel`, `OnStopRequest`) | **Résolu avec certitude** : c'est `DocumentLoadListener::TriggerRedirectToRealChannel` qui annule notre canal — voir [Où ça bloque](#où-ça-bloque) |
 
 **Ce qui reste comme piste principale, non vérifiable depuis l'extérieur** : une
 différence de **timing d'exécution interne** (l'ordre exact des appels, le
@@ -246,3 +269,4 @@ ce qu'on n'a pas encore fait.
 ## Journal des mises à jour
 
 - Version initiale : reconstitution du chemin complet et isolation du point de blocage.
+- Mise à jour : cause identifiée avec certitude via résolution de pile d'appel (`DocumentLoadListener::TriggerRedirectToRealChannel` annule notre canal) ; ajout des hypothèses `FetchMimePart` et "confusion d'origine de l'échec", toutes deux écartées/résolues.
