@@ -56,19 +56,39 @@ NS_IMETHODIMP CarbonioMessageChannel::GetName(nsACString& aName) {
 }
 
 NS_IMETHODIMP CarbonioMessageChannel::IsPending(bool* aPending) {
+  nsresult rv;
   if (mReadRequest) {
-    return mReadRequest->IsPending(aPending);
+    rv = mReadRequest->IsPending(aPending);
+  } else {
+    *aPending = mPending;
+    rv = NS_OK;
   }
-  *aPending = mPending;
-  return NS_OK;
+  // TEMPORARY DIAGNOSTIC
+  fprintf(stderr,
+          "[carbonio-debug] IsPending this=%p mReadRequest=%p -> pending=%d "
+          "rv=%08x\n",
+          static_cast<void*>(this), static_cast<void*>(mReadRequest.get()),
+          *aPending, uint32_t(rv));
+  fflush(stderr);
+  return rv;
 }
 
 NS_IMETHODIMP CarbonioMessageChannel::GetStatus(nsresult* aStatus) {
+  nsresult rv;
   if (mReadRequest && NS_SUCCEEDED(mStatus)) {
-    return mReadRequest->GetStatus(aStatus);
+    rv = mReadRequest->GetStatus(aStatus);
+  } else {
+    *aStatus = mStatus;
+    rv = NS_OK;
   }
-  *aStatus = mStatus;
-  return NS_OK;
+  // TEMPORARY DIAGNOSTIC
+  fprintf(stderr,
+          "[carbonio-debug] GetStatus this=%p mReadRequest=%p -> status=%08x "
+          "rv=%08x\n",
+          static_cast<void*>(this), static_cast<void*>(mReadRequest.get()),
+          uint32_t(*aStatus), uint32_t(rv));
+  fflush(stderr);
+  return rv;
 }
 
 NS_IMETHODIMP CarbonioMessageChannel::Cancel(nsresult aStatus) {
@@ -349,10 +369,60 @@ NS_IMETHODIMP CarbonioMessageChannel::SetParentProcessChannelHandle(
   return NS_OK;
 }
 
+namespace {
+
+/**
+ * TEMPORARY DIAGNOSTIC: wraps a real nsIStreamListener, logging every call
+ * it receives, to directly verify whether AsyncReadMessageFromStore (the
+ * shared, EWS-proven helper) actually drives OnStartRequest/OnDataAvailable/
+ * OnStopRequest on the consumer as expected on our side.
+ */
+class SpyStreamListener final : public nsIStreamListener {
+ public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIREQUESTOBSERVER
+  NS_DECL_NSISTREAMLISTENER
+
+  explicit SpyStreamListener(nsIStreamListener* aReal) : mReal(aReal) {}
+
+ private:
+  ~SpyStreamListener() = default;
+  nsCOMPtr<nsIStreamListener> mReal;
+};
+
+NS_IMPL_ISUPPORTS(SpyStreamListener, nsIStreamListener, nsIRequestObserver)
+
+NS_IMETHODIMP SpyStreamListener::OnStartRequest(nsIRequest* aRequest) {
+  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnStartRequest\n");
+  fflush(stderr);
+  return mReal->OnStartRequest(aRequest);
+}
+
+NS_IMETHODIMP SpyStreamListener::OnStopRequest(nsIRequest* aRequest,
+                                               nsresult aStatusCode) {
+  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnStopRequest status=%08x\n",
+          uint32_t(aStatusCode));
+  fflush(stderr);
+  return mReal->OnStopRequest(aRequest, aStatusCode);
+}
+
+NS_IMETHODIMP SpyStreamListener::OnDataAvailable(nsIRequest* aRequest,
+                                                 nsIInputStream* aInputStream,
+                                                 uint64_t aOffset,
+                                                 uint32_t aCount) {
+  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnDataAvailable count=%u\n",
+          aCount);
+  fflush(stderr);
+  return mReal->OnDataAvailable(aRequest, aInputStream, aOffset, aCount);
+}
+
+}  // namespace
+
 nsresult CarbonioMessageChannel::StartMessageReadFromStore(
     nsIStreamListener* streamListener) {
+  RefPtr<SpyStreamListener> spy = new SpyStreamListener(streamListener);
   nsresult rv = AsyncReadMessageFromStore(
-      mHdr, streamListener, /* convertData */ false, this,
+      mHdr, spy, /* convertData */ false, this,
       getter_AddRefs(mReadRequest));
   NS_ENSURE_SUCCESS(rv, rv);
 
