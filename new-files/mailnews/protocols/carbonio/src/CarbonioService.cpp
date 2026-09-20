@@ -141,6 +141,39 @@ NS_IMETHODIMP CarbonioService::StreamMessage(
   return FetchMessage(channelURI, aStreamListener);
 }
 
+NS_IMETHODIMP CarbonioService::FetchMimePart(nsIURI* aURI,
+                                             const nsACString& aMessageURI,
+                                             nsIStreamListener* aStreamListener,
+                                             nsIMsgWindow* aMsgWindow,
+                                             nsIUrlListener* aUrlListener,
+                                             nsIURI** aURL) {
+  // TEMPORARY DIAGNOSTIC
+  fprintf(stderr, "[carbonio-debug] FetchMimePart called! uri=%s\n",
+          nsCString(aMessageURI).get());
+  fflush(stderr);
+
+  // Mirrors ExchangeService::FetchMimePart exactly. Previously entirely
+  // missing here (an oversight, not a deliberate phase-1 stub) - found by
+  // diffing our full method list against ExchangeService's. This is called
+  // with the URI of the message/part as already resolved to our own
+  // "x-moz-carbonio" scheme by the caller (e.g. libmime while rendering a
+  // multipart message), so no further URI conversion is needed here, unlike
+  // the other entry points above which start from a "carbonio-message"
+  // URI and must call GetUrlForUri() themselves.
+  NS_ENSURE_ARG_POINTER(aURI);
+  NS_ENSURE_ARG_POINTER(aStreamListener);
+
+  nsCString scheme;
+  MOZ_TRY(aURI->GetScheme(scheme));
+  MOZ_ASSERT(scheme.EqualsLiteral("x-moz-carbonio"),
+             "the URI passed to FetchMimePart does not follow the expected "
+             "format");
+
+  NS_IF_ADDREF(*aURL = aURI);
+
+  return FetchMessage(aURI, aStreamListener);
+}
+
 NS_IMETHODIMP CarbonioService::StreamHeaders(const nsACString& aMessageURI,
                                              nsIStreamListener* aConsumer,
                                              nsIUrlListener* aUrlListener,
