@@ -94,6 +94,15 @@ NS_IMETHODIMP CarbonioMessageChannel::GetStatus(nsresult* aStatus) {
 }
 
 NS_IMETHODIMP CarbonioMessageChannel::Cancel(nsresult aStatus) {
+  // TEMPORARY DIAGNOSTIC: who calls Cancel() on us, and with what status?
+  fprintf(stderr,
+          "[carbonio-debug] CarbonioMessageChannel::Cancel this=%p status=%08x\n",
+          static_cast<void*>(this), uint32_t(aStatus));
+  fprintf(stderr, "[carbonio-debug] --- who called Cancel ---\n");
+  MozWalkTheStack(stderr, nullptr, 0);
+  fprintf(stderr, "[carbonio-debug] --- end stack ---\n");
+  fflush(stderr);
+
   if (mReadRequest) {
     return mReadRequest->Cancel(aStatus);
   }
@@ -413,7 +422,7 @@ NS_IMETHODIMP SpyStreamListener::OnStopRequest(nsIRequest* aRequest,
   // is invoking it - only when it's actually a failure, to keep noise down.
   if (NS_FAILED(aStatusCode)) {
     fprintf(stderr, "[carbonio-debug] --- stack at failing OnStopRequest ---\n");
-    mozilla::MozWalkTheStack(stderr, nullptr, 0);
+    MozWalkTheStack(stderr, nullptr, 0);
     fprintf(stderr, "[carbonio-debug] --- end stack ---\n");
   }
   fflush(stderr);
