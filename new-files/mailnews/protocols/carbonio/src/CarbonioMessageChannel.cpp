@@ -383,25 +383,29 @@ class SpyStreamListener final : public nsIStreamListener {
   NS_DECL_NSIREQUESTOBSERVER
   NS_DECL_NSISTREAMLISTENER
 
-  explicit SpyStreamListener(nsIStreamListener* aReal) : mReal(aReal) {}
+  SpyStreamListener(nsIStreamListener* aReal, void* aOwnerChannel)
+      : mReal(aReal), mOwnerChannel(aOwnerChannel) {}
 
  private:
   ~SpyStreamListener() = default;
   nsCOMPtr<nsIStreamListener> mReal;
+  void* mOwnerChannel;
 };
 
 NS_IMPL_ISUPPORTS(SpyStreamListener, nsIStreamListener, nsIRequestObserver)
 
 NS_IMETHODIMP SpyStreamListener::OnStartRequest(nsIRequest* aRequest) {
-  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnStartRequest\n");
+  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnStartRequest owner=%p\n",
+          mOwnerChannel);
   fflush(stderr);
   return mReal->OnStartRequest(aRequest);
 }
 
 NS_IMETHODIMP SpyStreamListener::OnStopRequest(nsIRequest* aRequest,
                                                nsresult aStatusCode) {
-  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnStopRequest status=%08x\n",
-          uint32_t(aStatusCode));
+  fprintf(stderr,
+          "[carbonio-debug] SpyStreamListener::OnStopRequest owner=%p status=%08x\n",
+          mOwnerChannel, uint32_t(aStatusCode));
   fflush(stderr);
   return mReal->OnStopRequest(aRequest, aStatusCode);
 }
@@ -410,8 +414,8 @@ NS_IMETHODIMP SpyStreamListener::OnDataAvailable(nsIRequest* aRequest,
                                                  nsIInputStream* aInputStream,
                                                  uint64_t aOffset,
                                                  uint32_t aCount) {
-  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnDataAvailable count=%u\n",
-          aCount);
+  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnDataAvailable owner=%p count=%u\n",
+          mOwnerChannel, aCount);
   fflush(stderr);
   return mReal->OnDataAvailable(aRequest, aInputStream, aOffset, aCount);
 }
@@ -420,7 +424,8 @@ NS_IMETHODIMP SpyStreamListener::OnDataAvailable(nsIRequest* aRequest,
 
 nsresult CarbonioMessageChannel::StartMessageReadFromStore(
     nsIStreamListener* streamListener) {
-  RefPtr<SpyStreamListener> spy = new SpyStreamListener(streamListener);
+  RefPtr<SpyStreamListener> spy =
+      new SpyStreamListener(streamListener, static_cast<void*>(this));
   nsresult rv = AsyncReadMessageFromStore(
       mHdr, spy, /* convertData */ false, this,
       getter_AddRefs(mReadRequest));
