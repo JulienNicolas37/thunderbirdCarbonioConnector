@@ -6,6 +6,8 @@
 
 #include <unistd.h>
 
+#include "mozilla/StackWalk.h"
+
 #include "CarbonioFolder.h"
 #include "CarbonioIncomingServer.h"
 #include "CarbonioListeners.h"
@@ -406,6 +408,14 @@ NS_IMETHODIMP SpyStreamListener::OnStopRequest(nsIRequest* aRequest,
   fprintf(stderr,
           "[carbonio-debug] SpyStreamListener::OnStopRequest owner=%p status=%08x\n",
           mOwnerChannel, uint32_t(aStatusCode));
+  // TEMPORARY DIAGNOSTIC: dump the call stack that led to this specific
+  // OnStopRequest call, to see exactly who (which Gecko-internal function)
+  // is invoking it - only when it's actually a failure, to keep noise down.
+  if (NS_FAILED(aStatusCode)) {
+    fprintf(stderr, "[carbonio-debug] --- stack at failing OnStopRequest ---\n");
+    mozilla::MozWalkTheStack(stderr, nullptr, 0);
+    fprintf(stderr, "[carbonio-debug] --- end stack ---\n");
+  }
   fflush(stderr);
   return mReal->OnStopRequest(aRequest, aStatusCode);
 }
