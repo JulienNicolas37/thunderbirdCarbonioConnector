@@ -99,6 +99,8 @@ Contrairement à `SyncRequest` (qui ne donne que des IDs bruts), `SearchRequest`
 
 La hiérarchie de dossiers (auth, sync, création/mise à jour/suppression, persistance entre sessions) est **implémentée, testée en conditions réelles dans Thunderbird, et fonctionnelle** — voir le document de conception pour le détail des bugs rencontrés et corrigés en cours de route.
 
-La récupération de message (`GetMsgRequest` en mode `raw`) et la liste de messages (`SearchRequest` par `inid:<id>`) sont **validées empiriquement côté API**, mais pas encore implémentées côté connecteur : ni le contrat Rust/C++ de synchro des messages par dossier, ni le bridge XPCOM `getMessage` (toujours stubé), ni le protocole d'ouverture de message.
+La récupération de message (`GetMsgRequest` en mode `raw`) et la liste de messages (`SearchRequest` par `inid:<id>`) sont **implémentées et validées en conditions réelles** (69 messages, compteur de non-lus exact, hiérarchie imbriquée correcte — voir `limitations-connues.md`).
 
-Prochaine étape : concevoir et implémenter la synchro de la liste de messages par dossier (équivalent du `SyncMessagesForFolder` d'EWS), en s'appuyant sur `SearchRequest`.
+L'ouverture de message est **résolue** : le contenu s'affiche correctement dans le volet de lecture et en ouverture dans un nouvel onglet (double-clic, confirmé), après correction d'un bug situé dans le cœur de Gecko lui-même (schéma `x-moz-carbonio` absent de deux listes blanches de sélection de processus) plutôt que dans notre propre code. Détail complet : `docs/mecanique-ouverture-message.md`. Reste néanmoins des cas d'affichage incorrect sur certains messages (écran blanc, aucune donnée), distincts de la boucle désormais résolue — voir `limitations-connues.md`.
+
+Prochaine étape : au choix, combler les manques identifiés dans `limitations-connues.md` (sync delta des messages, détection des changements/suppressions côté serveur, assistant de création de compte), ou entamer les démarches de contribution upstream pour les deux patches touchant `mozilla-central`.

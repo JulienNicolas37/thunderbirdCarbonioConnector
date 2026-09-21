@@ -1,6 +1,9 @@
 # Connecteur natif Carbonio pour Thunderbird — Conception Phase 1
 
-**Statut** : document de conception — aucun code n'a été généré, conformément à la validation requise avant toute génération.
+**Statut** : document de conception initial — conservé comme référence historique
+du raisonnement de départ. Pour l'état d'avancement actuel, voir
+`carbonio-thunderbird-connecteur-phase1-specification.md` (section Statut) et
+`limitations-connues.md`.
 **Base d'analyse** : code source réel du module `mailnews/protocols/exchange/` (EWS/Graph) de `comm-central`, exploré via le miroir GitHub `mozilla/releases-comm-central`.
 **Périmètre phase 1** : compte en lecture seule — authentification, synchronisation de la hiérarchie de dossiers, récupération des messages. Pas d'envoi, pas de suppression/déplacement, pas de calendrier/contacts.
 
@@ -88,8 +91,8 @@ Créer `mailnews/test/fakeserver/CarbonioServer.sys.mjs` : un faux serveur SOAP/
 
 Recommandation pour un POC : partir sur **B** pour aller vite, en gardant en tête que **A** serait le bon choix si l'objectif de contribution upstream se concrétise.
 
-## 5. Prochaines étapes proposées
+## 5. Prochaines étapes proposées (historique — voir statut actuel dans les docs citées en tête de fichier)
 
-1. Valider ce découpage de fichiers (ce document).
-2. Étudier en détail `ExchangeIncomingServer.cpp` et `test_folder_sync.js` pour extraire le contrat précis méthode par méthode (ce qui alimentera un futur document "phase 1 - spécification détaillée").
-3. Une fois validé, scaffold du crate Rust `carbonio_xpcom` (avec ton feu vert explicite avant toute génération de code, comme convenu).
+1. ~~Valider ce découpage de fichiers (ce document).~~ Fait.
+2. ~~Étudier en détail `ExchangeIncomingServer.cpp` et `test_folder_sync.js`...~~ Fait — voir `carbonio-thunderbird-connecteur-phase1-specification.md`.
+3. ~~Une fois validé, scaffold du crate Rust `carbonio_xpcom`...~~ Fait, et largement dépassé depuis : hiérarchie de dossiers, liste de messages et ouverture de message sont toutes fonctionnelles en conditions réelles. Voir `limitations-connues.md` pour ce qui reste à faire.
