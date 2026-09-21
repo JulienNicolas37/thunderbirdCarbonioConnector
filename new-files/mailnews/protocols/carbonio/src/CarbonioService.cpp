@@ -4,8 +4,6 @@
 
 #include "CarbonioService.h"
 
-#include <unistd.h>
-
 #include "mozilla/Components.h"
 #include "nsContentUtils.h"
 #include "nsDocShellLoadState.h"
@@ -45,14 +43,6 @@ NS_IMETHODIMP CarbonioService::LoadMessage(const nsACString& aMessageURI,
                                            nsIMsgWindow* aMsgWindow,
                                            nsIUrlListener* aUrlListener,
                                            bool aAutodetectCharset) {
-  // TEMPORARY DIAGNOSTIC
-  static int sCallCount = 0;
-  fprintf(stderr,
-          "[carbonio-debug] LoadMessage call #%d, pid=%d, uri=%s, aUrlListener=%p\n",
-          ++sCallCount, getpid(), nsCString(aMessageURI).get(),
-          static_cast<void*>(aUrlListener));
-  fflush(stderr);
-
   NS_ENSURE_ARG_POINTER(aDisplayConsumer);
 
   nsCOMPtr<nsIURI> channelURI;
@@ -149,11 +139,6 @@ NS_IMETHODIMP CarbonioService::FetchMimePart(nsIURI* aURI,
                                              nsIMsgWindow* aMsgWindow,
                                              nsIUrlListener* aUrlListener,
                                              nsIURI** _retval) {
-  // TEMPORARY DIAGNOSTIC
-  fprintf(stderr, "[carbonio-debug] FetchMimePart called! uri=%s\n",
-          nsCString(aMessageUri).get());
-  fflush(stderr);
-
   // Mirrors ExchangeService::FetchMimePart. `aURI` is already resolved to
   // our own "x-moz-carbonio" scheme by the caller (e.g. libmime fetching an
   // individual part of a multipart message during rendering), so no further

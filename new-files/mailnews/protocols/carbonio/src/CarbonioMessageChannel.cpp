@@ -4,10 +4,6 @@
 
 #include "CarbonioMessageChannel.h"
 
-#include <unistd.h>
-
-#include "mozilla/StackWalk.h"
-
 #include "CarbonioFolder.h"
 #include "CarbonioIncomingServer.h"
 #include "CarbonioListeners.h"
@@ -58,51 +54,22 @@ NS_IMETHODIMP CarbonioMessageChannel::GetName(nsACString& aName) {
 }
 
 NS_IMETHODIMP CarbonioMessageChannel::IsPending(bool* aPending) {
-  nsresult rv;
   if (mReadRequest) {
-    rv = mReadRequest->IsPending(aPending);
-  } else {
-    *aPending = mPending;
-    rv = NS_OK;
+    return mReadRequest->IsPending(aPending);
   }
-  // TEMPORARY DIAGNOSTIC
-  fprintf(stderr,
-          "[carbonio-debug] IsPending this=%p mReadRequest=%p -> pending=%d "
-          "rv=%08x\n",
-          static_cast<void*>(this), static_cast<void*>(mReadRequest.get()),
-          *aPending, uint32_t(rv));
-  fflush(stderr);
-  return rv;
+  *aPending = mPending;
+  return NS_OK;
 }
 
 NS_IMETHODIMP CarbonioMessageChannel::GetStatus(nsresult* aStatus) {
-  nsresult rv;
   if (mReadRequest && NS_SUCCEEDED(mStatus)) {
-    rv = mReadRequest->GetStatus(aStatus);
-  } else {
-    *aStatus = mStatus;
-    rv = NS_OK;
+    return mReadRequest->GetStatus(aStatus);
   }
-  // TEMPORARY DIAGNOSTIC
-  fprintf(stderr,
-          "[carbonio-debug] GetStatus this=%p mReadRequest=%p -> status=%08x "
-          "rv=%08x\n",
-          static_cast<void*>(this), static_cast<void*>(mReadRequest.get()),
-          uint32_t(*aStatus), uint32_t(rv));
-  fflush(stderr);
-  return rv;
+  *aStatus = mStatus;
+  return NS_OK;
 }
 
 NS_IMETHODIMP CarbonioMessageChannel::Cancel(nsresult aStatus) {
-  // TEMPORARY DIAGNOSTIC: who calls Cancel() on us, and with what status?
-  fprintf(stderr,
-          "[carbonio-debug] CarbonioMessageChannel::Cancel this=%p status=%08x\n",
-          static_cast<void*>(this), uint32_t(aStatus));
-  fprintf(stderr, "[carbonio-debug] --- who called Cancel ---\n");
-  MozWalkTheStack(stderr, nullptr, 0);
-  fprintf(stderr, "[carbonio-debug] --- end stack ---\n");
-  fflush(stderr);
-
   if (mReadRequest) {
     return mReadRequest->Cancel(aStatus);
   }
@@ -274,14 +241,6 @@ NS_IMETHODIMP CarbonioMessageChannel::Open(nsIInputStream** _retval) {
 }
 
 NS_IMETHODIMP CarbonioMessageChannel::AsyncOpen(nsIStreamListener* aListener) {
-  // TEMPORARY DIAGNOSTIC
-  static int sCallCount = 0;
-  nsCString debugSpec;
-  if (mURI) mURI->GetSpec(debugSpec);
-  fprintf(stderr, "[carbonio-debug] AsyncOpen call #%d, pid=%d this=%p uri=%s\n",
-          ++sCallCount, getpid(), static_cast<void*>(this), debugSpec.get());
-  fflush(stderr);
-
   mPending = false;
 
   nsCOMPtr<nsIStreamListener> listener = aListener;
@@ -380,73 +339,10 @@ NS_IMETHODIMP CarbonioMessageChannel::SetParentProcessChannelHandle(
   return NS_OK;
 }
 
-namespace {
-
-/**
- * TEMPORARY DIAGNOSTIC: wraps a real nsIStreamListener, logging every call
- * it receives, to directly verify whether AsyncReadMessageFromStore (the
- * shared, EWS-proven helper) actually drives OnStartRequest/OnDataAvailable/
- * OnStopRequest on the consumer as expected on our side.
- */
-class SpyStreamListener final : public nsIStreamListener {
- public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIREQUESTOBSERVER
-  NS_DECL_NSISTREAMLISTENER
-
-  SpyStreamListener(nsIStreamListener* aReal, void* aOwnerChannel)
-      : mReal(aReal), mOwnerChannel(aOwnerChannel) {}
-
- private:
-  ~SpyStreamListener() = default;
-  nsCOMPtr<nsIStreamListener> mReal;
-  void* mOwnerChannel;
-};
-
-NS_IMPL_ISUPPORTS(SpyStreamListener, nsIStreamListener, nsIRequestObserver)
-
-NS_IMETHODIMP SpyStreamListener::OnStartRequest(nsIRequest* aRequest) {
-  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnStartRequest owner=%p\n",
-          mOwnerChannel);
-  fflush(stderr);
-  return mReal->OnStartRequest(aRequest);
-}
-
-NS_IMETHODIMP SpyStreamListener::OnStopRequest(nsIRequest* aRequest,
-                                               nsresult aStatusCode) {
-  fprintf(stderr,
-          "[carbonio-debug] SpyStreamListener::OnStopRequest owner=%p status=%08x\n",
-          mOwnerChannel, uint32_t(aStatusCode));
-  // TEMPORARY DIAGNOSTIC: dump the call stack that led to this specific
-  // OnStopRequest call, to see exactly who (which Gecko-internal function)
-  // is invoking it - only when it's actually a failure, to keep noise down.
-  if (NS_FAILED(aStatusCode)) {
-    fprintf(stderr, "[carbonio-debug] --- stack at failing OnStopRequest ---\n");
-    MozWalkTheStack(stderr, nullptr, 0);
-    fprintf(stderr, "[carbonio-debug] --- end stack ---\n");
-  }
-  fflush(stderr);
-  return mReal->OnStopRequest(aRequest, aStatusCode);
-}
-
-NS_IMETHODIMP SpyStreamListener::OnDataAvailable(nsIRequest* aRequest,
-                                                 nsIInputStream* aInputStream,
-                                                 uint64_t aOffset,
-                                                 uint32_t aCount) {
-  fprintf(stderr, "[carbonio-debug] SpyStreamListener::OnDataAvailable owner=%p count=%u\n",
-          mOwnerChannel, aCount);
-  fflush(stderr);
-  return mReal->OnDataAvailable(aRequest, aInputStream, aOffset, aCount);
-}
-
-}  // namespace
-
 nsresult CarbonioMessageChannel::StartMessageReadFromStore(
     nsIStreamListener* streamListener) {
-  RefPtr<SpyStreamListener> spy =
-      new SpyStreamListener(streamListener, static_cast<void*>(this));
   nsresult rv = AsyncReadMessageFromStore(
-      mHdr, spy, /* convertData */ false, this,
+      mHdr, streamListener, /* convertData */ false, this,
       getter_AddRefs(mReadRequest));
   NS_ENSURE_SUCCESS(rv, rv);
 

@@ -1,0 +1,37 @@
+# Purpose: fixes the message-open infinite loop (NS_ERROR_DOCUMENT_LOAD_LISTENER_NO_PARENT_CHANNEL).
+#
+# nsDocShell::CanLoadInParentProcess() hardcodes a scheme allowlist of mail
+# protocols allowed to stay in the parent process (imap, mailbox, news, nntp,
+# snews, x-moz-ews, x-moz-graph). Our x-moz-carbonio scheme isn't in that list
+# (understandably, since this is a third-party module Mozilla couldn't have
+# known about), so Gecko decides a Carbonio message load needs a content
+# process switch. DocumentLoadListener::TriggerRedirectToRealChannel then
+# looks up a nsIParentChannel wrapper registered under the redirect channel
+# id for that switch - one that's never actually created for our case - and
+# cancels our channel with NS_ERROR_DOCUMENT_LOAD_LISTENER_NO_PARENT_CHANNEL
+# when the lookup comes back empty. aboutMessage.js then retries loadMessage()
+# from scratch, causing the infinite LoadMessage/AsyncOpen loop.
+#
+# EWS's x-moz-ews scheme is already in this allowlist, which is why it never
+# hits this path. Adding x-moz-carbonio alongside it is the same kind of
+# addition Mozilla already made for every other Thunderbird mail backend.
+#
+# Full root-cause writeup: docs/mecanique-ouverture-message.md
+#
+# Applies to: mozilla-central checkout, docshell/base/nsDocShell.cpp
+# Apply with: hg import --no-commit patches/allow-x-moz-carbonio-in-parent-process.patch
+#         or: patch -p1 < patches/allow-x-moz-carbonio-in-parent-process.patch
+
+diff --git a/docshell/base/nsDocShell.cpp b/docshell/base/nsDocShell.cpp
+--- a/docshell/base/nsDocShell.cpp
++++ b/docshell/base/nsDocShell.cpp
+@@ -9030,7 +9030,8 @@ bool nsDocShell::CanLoadInParentProcess(
+   if (uri->SchemeIs("imap") || uri->SchemeIs("mailbox") ||
+       uri->SchemeIs("news") || uri->SchemeIs("nntp") ||
+       uri->SchemeIs("snews") || uri->SchemeIs("x-moz-ews") ||
+-      uri->SchemeIs("x-moz-graph")) {
++      uri->SchemeIs("x-moz-graph") ||
++      uri->SchemeIs("x-moz-carbonio")) {
+     return true;
+   }
+ #endif

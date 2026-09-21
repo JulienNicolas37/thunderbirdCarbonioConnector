@@ -1,12 +1,16 @@
-# Mécanique d'ouverture d'un message — du double-clic à l'affichage
+# Mécanique d'ouverture d'un message — du double-clic à l'affichage (RÉSOLU)
 
 Ce document retrace, étape par étape, tout ce qui se passe quand on double-clique
 sur un message dans la liste, et documente précisément où notre connecteur bloque
 aujourd'hui. Il sert de base de travail interne, et de matière première pour un
 futur échange avec la communauté Thunderbird/Gecko.
 
-**Statut : non résolu.** Voir la section [Où ça bloque](#où-ça-bloque) et
-[Ce qu'on a écarté](#ce-quon-a-écarté) pour l'état exact des investigations.
+**Statut : RÉSOLU.** Voir la section [La résolution](#la-résolution) pour le
+correctif final. Les sections qui suivent, en particulier
+[Où ça bloque](#où-ça-bloque) et [Ce qu'on a écarté](#ce-quon-a-écarté),
+retracent le cheminement complet de l'investigation et restent une référence
+utile pour comprendre la mécanique — mais le correctif lui-même est dans la
+dernière section.
 
 ---
 
@@ -225,6 +229,105 @@ source exact de `TriggerRedirectToRealChannel`
 (`netwerk/ipc/DocumentLoadListener.cpp`), qu'on n'a pas pu consulter en détail
 depuis l'extérieur — c'est le point précis à poser à la communauté.
 
+### Confirmation croisée côté EWS (même instrumentation, cas qui réussit)
+
+En posant exactement les mêmes sondes (`Cancel`, pile d'appel) sur
+`ExchangeMessageChannel`, on obtient une comparaison directe :
+
+- **`Cancel` n'est jamais appelé côté EWS**, dans aucun cycle observé.
+- `OnDataAvailable` (avec de vraies données, ex. `count=95154`) puis
+  `OnStopRequest status=00000000` (succès) s'enchaînent proprement à chaque
+  fois.
+- **Tous les `AsyncOpen` d'EWS partagent le même PID que `LoadMessage`** —
+  aucun processus enfant n'est jamais créé.
+
+Chez Carbonio, à l'inverse, un **second PID (processus enfant) apparaît
+systématiquement** à chaque cycle, en plus de l'`AsyncOpen` dans le processus
+parent.
+
+**Ça resserre la question à un point précis** : `TriggerRedirectToRealChannel`
+ne semble poser problème que lorsqu'un changement de processus est réellement
+nécessaire. EWS n'en a jamais besoin (tout reste dans le processus parent) ;
+Carbonio, pour une raison qui reste à déterminer, en déclenche un à chaque
+fois — et c'est précisément à cette étape de redirection vers l'autre
+processus que la référence attendue se révèle absente.
+
+**La question resserrée pour la communauté** : qu'est-ce qui, dans la
+sélection du processus de destination pour un chargement `docShell.LoadURI()`
+(type de contenu détecté, `LoadInfo`, politique de sécurité, ou autre),
+pourrait faire qu'un schéma d'URI personnalisé comme `x-moz-carbonio`
+déclenche un changement de processus alors qu'un schéma structurellement
+identique (`x-moz-ews`) n'en déclenche jamais ?
+
+---
+
+### Le mécanisme complet, lu directement dans le code source local
+
+En lisant `netwerk/ipc/DocumentLoadListener.cpp` (présent en entier dans le
+checkout mozilla-central local — pas besoin de deviner depuis des extraits
+web), on trouve la chaîne complète, avec les noms exacts.
+
+**1. `RedirectToRealChannel`** enregistre notre canal dans un registre
+partagé (`RedirectChannelRegistrar`), sous un identifiant généré :
+
+```cpp
+mRedirectChannelId = nsContentUtils::GenerateLoadIdentifier();
+MOZ_ALWAYS_SUCCEEDS(registrar->RegisterChannel(chan, mRedirectChannelId,
+                                               ownerContentParentId));
+
+if (aDestinationProcess) {
+  // Chemin "changement de processus" : IPC vers le processus de contenu
+  // (SendCrossProcessRedirect), puis retour via FinishReplacementChannelSetup
+  ...
+} else {
+  // Chemin "même processus" : résout directement la promesse d'ouverture,
+  // ne repasse JAMAIS par la recherche ci-dessous.
+  mOpenPromise->Resolve(...);
+  ...
+}
+```
+
+**2. `FinishReplacementChannelSetup`** (appelé uniquement sur le chemin
+"changement de processus") recherche, sous ce même identifiant, un objet
+**différent** — un `nsIParentChannel` (pas notre `nsIChannel` directement,
+une enveloppe séparée) :
+
+```cpp
+nsCOMPtr<nsIParentChannel> redirectChannel;
+nsresult rv = registrar->GetParentChannel(mRedirectChannelId,
+                                          getter_AddRefs(redirectChannel));
+if (NS_FAILED(rv) || !redirectChannel) {
+  aResult = NS_ERROR_DOCUMENT_LOAD_LISTENER_NO_PARENT_CHANNEL;
+}
+...
+if (NS_FAILED(aResult)) {
+  ...
+  mChannel->Cancel(aResult);   // ← exactement ce qu'on observe en logs
+  mChannel->Resume();
+  return;
+}
+```
+
+**Le point clé** : ce `nsIParentChannel` est une enveloppe **séparée** de
+notre canal (voir `ParentChannelWrapper : public nsIParentChannel` dans
+`netwerk/ipc/ParentChannelWrapper.h`), normalement créée et enregistrée par
+le code générique de navigation web une fois le processus de destination
+confirmé. **Si rien ne crée jamais cette enveloppe pour notre cas — parce que
+ce mécanisme cible la navigation web classique (onglets, iframes), pas un
+message chargé via `nsIMsgMessageService` dans un docShell intégré — la
+recherche revient bredouille, et notre canal est annulé.**
+
+Ça explique aussi, précisément, pourquoi EWS n'est jamais concerné : sans
+changement de processus (`aDestinationProcess` vide), le code **saute
+directement** à la résolution de la promesse d'ouverture — il ne passe jamais
+par cette recherche de `nsIParentChannel`.
+
+**La question ultime, désormais totalement précise** : qu'est-ce qui décide,
+avant tout ça, qu'un chargement Carbonio nécessite un changement de processus
+alors qu'un chargement EWS structurellement identique n'en a jamais besoin ?
+C'est cette décision-là qui a permis de trouver le vrai correctif — voir
+[La résolution](#la-résolution) ci-dessous.
+
 ---
 
 ## Ce qu'on a écarté
@@ -248,17 +351,104 @@ Liste des hypothèses testées et **infirmées**, pour ne pas les reprendre :
 | `FetchMimePart`/`nsIMsgMessageFetchPartService` manquante sur `CarbonioService` | Diff exhaustif + implémentation + log d'appel | Manquait réellement (lacune comblée), mais **jamais appelée pendant l'ouverture d'un message** — pas la cause |
 | Confusion sur l'origine réelle de l'échec (canal enfant vs canal principal, `DocumentLoadListener` vs autre) | Pile d'appel complète capturée (`MozWalkTheStack`) et résolue (`addr2line`) aux points clés (`Cancel`, `OnStopRequest`) | **Résolu avec certitude** : c'est `DocumentLoadListener::TriggerRedirectToRealChannel` qui annule notre canal — voir [Où ça bloque](#où-ça-bloque) |
 
-**Ce qui reste comme piste principale, non vérifiable depuis l'extérieur** : une
-différence de **timing d'exécution interne** (l'ordre exact des appels, le
-moment où certains états deviennent visibles) entre notre canal et celui d'EWS,
-invisible par comparaison statique de code, qui perturbe le suivi de référence
-que fait `DocumentLoadListener`. Vérifier ça demanderait de déboguer
-interactivement le code interne de Gecko (`netwerk/ipc/DocumentLoadListener.cpp`),
-ce qu'on n'a pas encore fait.
+**Ce qui a permis de trancher, finalement** : la comparaison croisée avec EWS
+en conditions réelles (même instrumentation, même code de sondage, un clic
+chacun) a montré qu'EWS ne change **jamais** de processus, alors que Carbonio
+en change **systématiquement**. Cette différence de comportement — pas
+visible en comparant seulement le code statique de nos deux connecteurs — a
+mené directement à la vraie cause. Voir [La résolution](#la-résolution).
 
 ---
 
-## Repères utiles pour la suite
+## La résolution
+
+Deux fonctions Gecko maintiennent chacune une **liste blanche de schémas
+d'URI** codée en dur, énumérant les protocoles mail que Thunderbird a le
+droit de garder dans le processus parent (`imap`, `mailbox`, `news`, `nntp`,
+`snews`, `x-moz-ews`, `x-moz-graph`). Notre schéma, `x-moz-carbonio`, n'y
+figurait dans aucune des deux — pas par bug, simplement parce que c'est un
+module tiers que les mainteneurs de Thunderbird ne pouvaient pas connaître.
+
+### La vraie décision : `IsolationBehaviorForURI`
+
+**`dom/ipc/ProcessIsolation.cpp`**, fonction `IsolationBehaviorForURI` :
+
+```cpp
+// Protocols used by Thunderbird to display email messages.
+if (scheme == "imap"_ns || scheme == "mailbox"_ns || scheme == "news"_ns ||
+    scheme == "nntp"_ns || scheme == "snews"_ns || scheme == "x-moz-ews"_ns ||
+    scheme == "x-moz-graph"_ns) {
+  return IsolationBehavior::Parent;
+}
+// ... (pas de correspondance pour nous)
+return IsolationBehavior::WebContent;   // ← notre schéma tombait ici
+```
+
+C'est cette fonction qui calcule `IsolationBehavior`, dont dérive
+`options.mRemoteType` dans `IsolationOptionsForNavigation`, comparé ensuite à
+`currentRemoteType` dans `DocumentLoadListener::MaybeTriggerProcessSwitch` :
+
+```cpp
+if (currentRemoteType == options.mRemoteType && ...) {
+  return false;   // pas de changement de processus — le cas d'EWS
+}
+```
+
+Faute de correspondance, Carbonio tombait sur `IsolationBehavior::WebContent`
+→ `mRemoteType` différent du type courant → `MaybeTriggerProcessSwitch`
+déclenche un vrai changement de processus à chaque chargement de message →
+`TriggerRedirectToRealChannel` cherche le `nsIParentChannel` enregistré pour
+ce changement (voir plus haut) → jamais créé pour ce genre de chargement →
+`Cancel(NO_PARENT_CHANNEL)` → boucle infinie côté UI.
+
+**Le correctif** : ajouter `x-moz-carbonio` à cette liste.
+
+```diff
+--- a/dom/ipc/ProcessIsolation.cpp
++++ b/dom/ipc/ProcessIsolation.cpp
+@@ -354,7 +354,7 @@ static IsolationBehavior IsolationBehavi
+   // Protocols used by Thunderbird to display email messages.
+   if (scheme == "imap"_ns || scheme == "mailbox"_ns || scheme == "news"_ns ||
+       scheme == "nntp"_ns || scheme == "snews"_ns || scheme == "x-moz-ews"_ns ||
+-      scheme == "x-moz-graph"_ns) {
++      scheme == "x-moz-graph"_ns || scheme == "x-moz-carbonio"_ns) {
+     return IsolationBehavior::Parent;
+   }
+```
+
+Patch complet : `patches/allow-x-moz-carbonio-in-process-isolation.patch`.
+**C'est le correctif décisif** — celui qui a réellement arrêté la boucle et
+permis l'affichage du message.
+
+### Une seconde liste, apparentée mais insuffisante seule
+
+**`docshell/base/nsDocShell.cpp`**, fonction `CanLoadInParentProcess`, contient
+une liste quasi identique, utilisée cette fois pour le sens inverse (un
+chargement qui revient du processus de contenu vers le parent). On l'a
+corrigée aussi par cohérence (patch
+`patches/allow-x-moz-carbonio-in-parent-process.patch`), mais **ce patch seul
+n'a pas suffi à arrêter la boucle** — la correction déterminante est bien
+celle de `ProcessIsolation.cpp` ci-dessus. Les deux patches sont conservés
+côte à côte car ils couvrent des chemins de code différents et légitimes.
+
+### Validation
+
+Avec les deux patches appliqués, un clic sur un message donne, en logs :
+`LoadMessage` appelé **une seule fois**, `AsyncOpen` reste dans le **même
+PID**, `SpyStreamListener::OnDataAvailable` se déclenche enfin (jamais observé
+auparavant côté Carbonio), `OnStopRequest status=00000000`, et surtout — le
+contenu du message s'affiche correctement dans le volet de lecture.
+
+### Pour une contribution upstream
+
+Ces deux patches ajoutent notre schéma à des listes qui contiennent déjà
+tous les protocoles mail internes de Thunderbird (EWS, IMAP, NNTP...) — le
+genre d'ajout qu'un mainteneur Thunderbird accepterait sans discussion, à
+la manière de ce qui a déjà été fait pour `x-moz-ews` et `x-moz-graph`.
+
+---
+
+
 
 - **`nsIChannel`** : représente "un chargement de contenu en cours". `AsyncOpen()` le démarre.
 - **`nsIStreamListener`** : reçoit le contenu (`OnStartRequest` → `OnDataAvailable`* → `OnStopRequest`).
@@ -270,3 +460,6 @@ ce qu'on n'a pas encore fait.
 
 - Version initiale : reconstitution du chemin complet et isolation du point de blocage.
 - Mise à jour : cause identifiée avec certitude via résolution de pile d'appel (`DocumentLoadListener::TriggerRedirectToRealChannel` annule notre canal) ; ajout des hypothèses `FetchMimePart` et "confusion d'origine de l'échec", toutes deux écartées/résolues.
+- Mise à jour : confirmation croisée côté EWS avec la même instrumentation — EWS ne change jamais de processus et `Cancel` n'y est jamais appelé, resserrant la question à "pourquoi Carbonio déclenche-t-il un changement de processus, contrairement à EWS ?".
+- Mise à jour : mécanisme complet lu directement dans `netwerk/ipc/DocumentLoadListener.cpp` (checkout local) — le `nsIParentChannel` attendu par `FinishReplacementChannelSetup` n'est jamais enregistré pour notre canal, uniquement sur le chemin "changement de processus" (jamais emprunté par EWS).
+- **RÉSOLU** : cause racine identifiée jusqu'au bout dans `dom/ipc/ProcessIsolation.cpp` (`IsolationBehaviorForURI`) — liste blanche de schémas mail codée en dur, `x-moz-carbonio` absent. Correctif appliqué et validé en conditions réelles (patches dans `patches/allow-x-moz-carbonio-in-process-isolation.patch` et `patches/allow-x-moz-carbonio-in-parent-process.patch`) : le message s'affiche enfin correctement.
