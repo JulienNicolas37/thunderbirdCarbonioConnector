@@ -1,0 +1,85 @@
+# Purpose: adds Carbonio as a selectable protocol in Thunderbird's manual
+# account-setup form (Account Hub), so an account can be created through the
+# graphical wizard instead of hand-editing prefs.js/user.js.
+#
+# Two files in comm-central hardcode the list of available incoming
+# protocols as a numeric-keyed map (1=imap, 2=pop3, 3=exchange, 4=ews,
+# 5=graph) — there is no dynamic/pluggable registration of protocols in this
+# form, unlike the messageservice contract used elsewhere in the connector.
+# This patch adds carbonio as value 6 throughout.
+#
+# No changes needed in CreateInBackend.sys.mjs: account creation itself goes
+# through MailServices.accounts.createIncomingServer(username, hostname,
+# config.incoming.type), which already resolves correctly via the existing
+# @mozilla.org/messenger/server;1?type=carbonio XPCOM contract (registered
+# in our own components.conf). Only the UI-facing protocol list needed a
+# patch here.
+#
+# One extra fix beyond the two obvious dictionary additions: the "change"
+# listener on the protocol <select> used a numeric threshold check
+# (`value >= 4`) to decide whether to show the Exchange-style URL field
+# instead of the normal hostname/port fields. Carbonio at value 6 would have
+# incorrectly matched that threshold and been treated as an Exchange-family
+# protocol. Replaced with an explicit value list (["3", "4", "5"]) so
+# Carbonio correctly falls through to the standard hostname/port form —
+# which matches how a Carbonio server is actually configured (plain
+# hostname/port/credentials, no special URL field).
+#
+# isExchangeConfig() in AccountConfig.sys.mjs needed no change: it already
+# tests specifically for "ews"/"graph", not a numeric range, so it correctly
+# excludes "carbonio" as-is.
+#
+# Full context and the investigation that led here:
+# docs/limitations-connues.md, section "Compte et création"
+#
+# Applies to: comm-central checkout (a separate nested Mercurial repo under
+# mozilla-central's comm/ directory)
+# Apply with (from inside the comm/ checkout):
+#   hg import --no-commit patches/add-carbonio-to-account-wizard.patch
+# or:
+#   patch -p1 < patches/add-carbonio-to-account-wizard.patch
+
+diff --git a/mail/components/accountcreation/templates/accountHubEmailIncomingFormTemplate.inc.xhtml b/mail/components/accountcreation/templates/accountHubEmailIncomingFormTemplate.inc.xhtml
+--- a/mail/components/accountcreation/templates/accountHubEmailIncomingFormTemplate.inc.xhtml
++++ b/mail/components/accountcreation/templates/accountHubEmailIncomingFormTemplate.inc.xhtml
+@@ -21,6 +21,8 @@
+                       value="4">EWS</option>
+               <option id="incomingProtocolGraph"
+                       value="5" >Graph</option>
++              <option id="incomingProtocolCarbonio"
++                      value="6">Carbonio</option>
+           </account-hub-select>
+         </div>
+         <div id="incomingHostnameFormGroup" class="expanded">
+
+diff --git a/mail/components/accountcreation/content/widgets/email-manual-incoming-form.mjs b/mail/components/accountcreation/content/widgets/email-manual-incoming-form.mjs
+--- a/mail/components/accountcreation/content/widgets/email-manual-incoming-form.mjs
++++ b/mail/components/accountcreation/content/widgets/email-manual-incoming-form.mjs
+@@ -147,7 +147,9 @@ class EmailIncomingForm extends AccountH
+     });
+ 
+     this.#incomingProtocol.addEventListener("change", () => {
+-      this.#updateConfigInputsVisibility(this.#incomingProtocol.value >= 4);
++      this.#updateConfigInputsVisibility(
++        ["3", "4", "5"].includes(this.#incomingProtocol.value)
++      );
+       this.#configChanged();
+       this.#adjustPortToSSLAndProtocol();
+       this.#adjustOAuth2Visibility();
+@@ -418,6 +420,7 @@ class EmailIncomingForm extends AccountH
+         3: "exchange",
+         4: "ews",
+         5: "graph",
++        6: "carbonio",
+         0: null,
+       }
+     );
+@@ -460,7 +463,7 @@ class EmailIncomingForm extends AccountH
+ 
+     this.#incomingProtocol.value = InputSanitizer.translate(
+       config.incoming.type,
+-      { imap: 1, pop3: 2, exchange: 3, ews: 4, graph: 5 },
++      { imap: 1, pop3: 2, exchange: 3, ews: 4, graph: 5, carbonio: 6 },
+       1
+     );
+     this.#incomingHostname.value = config.incoming.hostname;
