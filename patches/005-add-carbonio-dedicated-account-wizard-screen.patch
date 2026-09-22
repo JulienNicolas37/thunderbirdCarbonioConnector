@@ -1,0 +1,551 @@
+# Purpose: adds a dedicated Carbonio screen to Thunderbird's account-setup
+# wizard (Account Hub), reachable from a new "Carbonio" card on the initial
+# protocol-select screen.
+#
+# Supersedes the standalone-protocol-in-manual-form approach from
+# add-carbonio-to-account-wizard.patch (still included here, its changes to
+# email-manual-incoming-form.mjs/accountHubEmailIncomingFormTemplate.inc.xhtml
+# are harmless and kept for consistency, but Carbonio is no longer reached
+# through that path in normal use).
+#
+# Design rationale: Carbonio is a single-endpoint protocol (one server
+# handles both incoming and outgoing, via its own native SOAP/REST API - see
+# docs/limitations-connues.md, "Hors périmètre phase 1", on the decision to
+# use that API rather than exposing SMTP). The generic manual-config path
+# (email-manual-incoming-form.mjs) assumes separate incoming/outgoing
+# servers - the IMAP/POP3+SMTP model - and isn't a good fit. Thunderbird
+# already made the same call for Exchange: "Microsoft" doesn't go through
+# that generic form either, it gets its own dedicated screen
+# (exchangeSettingsSubview -> exchangeTypeSubview). Carbonio follows the same
+# principle, collapsed to a single step since there's no reliable
+# auto-discovery to justify Exchange's two-stage flow (see
+# docs/limitations-connues.md, "Pas d'autodiscover dédié à Carbonio", for the
+# full mapping of that Microsoft flow and why it doesn't apply here).
+#
+# What this adds:
+# - A 4th card ("Carbonio") on the protocol-select screen, alongside
+#   IMAP/Microsoft/POP3.
+# - A new single-step form (email-carbonio-settings.mjs +
+#   accountHubEmailCarbonioSettingsTemplate.inc.xhtml): hostname, port,
+#   connection security, username. No password field (handled by the shared
+#   emailPasswordSubview step that follows, same as every other protocol).
+#   No auth-method selector: Carbonio only supports plain username/password
+#   against its own API for now, so config.incoming.auth is set directly to
+#   passwordCleartext in code.
+#   No outgoing/SMTP fields: config.outgoing is mirrored from config.incoming
+#   so nothing downstream ends up with an empty outgoing server, consistent
+#   with the native-API sending decision.
+# - New "carbonioSettingsSubview" state wired into views/email.mjs (modeled
+#   on "manualConfigSubview" for its state shape - a normal "Connect"-style
+#   step - since "exchangeSettingsSubview" is specifically shaped around
+#   triggering auto-discovery, which doesn't apply here).
+# - Two new Fluent strings (account-hub-protocol-carbonio,
+#   account-hub-email-carbonio-settings). Every other label in the new form
+#   reuses existing generic strings already used by
+#   email-manual-incoming-form.mjs (hostname/port/security/username labels
+#   and their error messages) - no other new strings needed.
+#
+# No changes needed in CreateInBackend.sys.mjs or AccountConfig.sys.mjs -
+# same reasoning as the previous patch: the @mozilla.org/messenger/server;1
+# ?type=carbonio XPCOM contract is already registered, and isExchangeConfig()
+# already correctly excludes "carbonio".
+#
+# Full context and the investigation that led here:
+# docs/limitations-connues.md, section "Compte et création"
+#
+# Applies to: comm-central checkout (a separate nested Mercurial repo under
+# mozilla-central's comm/ directory)
+# Apply with (from inside the comm/ checkout):
+#   hg import --no-commit patches/add-carbonio-dedicated-account-wizard-screen.patch
+# or:
+#   patch -p1 < patches/add-carbonio-dedicated-account-wizard-screen.patch
+
+diff --git a/mail/components/accountcreation/content/widgets/email-carbonio-settings.mjs b/mail/components/accountcreation/content/widgets/email-carbonio-settings.mjs
+new file mode 100644
+--- /dev/null
++++ b/mail/components/accountcreation/content/widgets/email-carbonio-settings.mjs
+@@ -0,0 +1,177 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++const { AccountCreationUtils } = ChromeUtils.importESModule(
++  "resource:///modules/accountcreation/AccountCreationUtils.sys.mjs"
++);
++const { AccountConfig } = ChromeUtils.importESModule(
++  "resource:///modules/accountcreation/AccountConfig.sys.mjs"
++);
++const { InputSanitizer } = ChromeUtils.importESModule(
++  "resource:///modules/accountcreation/InputSanitizer.sys.mjs"
++);
++
++const { gAccountSetupLogger, standardPorts, assert } = AccountCreationUtils;
++
++import { AccountHubStep } from "./account-hub-step.mjs";
++import "./account-hub-select.mjs"; // eslint-disable-line import/no-unassigned-import
++
++/**
++ * Account Hub Carbonio Settings Form
++ * Template ID: #accountHubEmailCarbonioSettingsTemplate (from
++ * accountHubEmailCarbonioSettingsTemplate.inc.xhtml)
++ *
++ * A single-step incoming/outgoing configuration form for Carbonio accounts.
++ * Unlike email-manual-incoming-form.mjs, this is not paired with a separate
++ * outgoing (SMTP) step: Carbonio sends mail through its own native SOAP/REST
++ * API, not SMTP, so there is nothing to configure on the outgoing side.
++ *
++ * @tagname email-carbonio-settings
++ */
++class EmailCarbonioSettings extends AccountHubStep {
++  #form;
++  #hostname;
++  #port;
++  #connectionSecurity;
++  #username;
++  #currentConfig;
++  #edited = false;
++
++  connectedCallback() {
++    if (this.hasConnected) {
++      return;
++    }
++    this.hasConnected = true;
++
++    super.connectedCallback();
++
++    const template = document
++      .getElementById("accountHubEmailCarbonioSettingsTemplate")
++      .content.cloneNode(true);
++    this.appendChild(template);
++
++    this.#form = this.querySelector("#carbonioSettingsForm");
++    this.#hostname = this.querySelector("#carbonioHostname");
++    this.#port = this.querySelector("#carbonioPort");
++    this.#connectionSecurity = this.querySelector(
++      "#carbonioConnectionSecurity"
++    );
++    this.#username = this.querySelector("#carbonioUsername");
++
++    this.#hostname.addEventListener("input", () => this.#configChanged());
++    this.#port.addEventListener("input", () => this.#configChanged());
++    this.#connectionSecurity.addEventListener("change", () =>
++      this.#configChanged()
++    );
++    this.#username.addEventListener("input", () => this.#configChanged());
++  }
++
++  /**
++   * @param {AccountConfig} configData - The config to present to the user.
++   */
++  setState(configData) {
++    assert(configData instanceof AccountConfig);
++    this.#currentConfig = configData;
++
++    this.#hostname.value = configData.incoming.hostname || "";
++    this.#port.value = configData.incoming.port || 443;
++    this.#connectionSecurity.value = InputSanitizer.enum(
++      configData.incoming.socketType,
++      [0, 2, 3],
++      3
++    );
++    this.#username.value = configData.incoming.username || "";
++    this.#checkFormValidity();
++  }
++
++  resetState() {
++    this.#edited = false;
++  }
++
++  captureState() {
++    return {
++      config: this.getCarbonioUserConfig(),
++      edited: this.#edited,
++    };
++  }
++
++  /**
++   * Returns an Account Config object with the sanitized user-inputted data
++   * for a Carbonio configuration.
++   *
++   * @returns {AccountConfig}
++   */
++  getCarbonioUserConfig() {
++    const config = this.#currentConfig.copy();
++    config.source = AccountConfig.kSourceUser;
++    config.incoming.type = "carbonio";
++
++    try {
++      config.incoming.hostname = InputSanitizer.hostname(
++        this.#hostname.value
++      );
++      this.#hostname.setCustomValidity("");
++      this.#hostname.setAttribute("aria-invalid", false);
++    } catch (error) {
++      gAccountSetupLogger.warn(error);
++      this.#hostname.setCustomValidity(error._message);
++      this.#hostname.setAttribute("aria-invalid", true);
++    }
++
++    try {
++      config.incoming.port = InputSanitizer.integerRange(
++        this.#port.valueAsNumber,
++        1,
++        65535
++      );
++    } catch (error) {
++      config.incoming.port = undefined;
++      this.#port.setCustomValidity(error._message);
++      this.#port.setAttribute("aria-invalid", true);
++    }
++
++    config.incoming.socketType = InputSanitizer.integer(
++      this.#connectionSecurity.value
++    );
++
++    // Carbonio has a single native auth mode (username/password against its
++    // own SOAP API) - no OAuth/NTLM/Kerberos choice to expose here.
++    config.incoming.auth = Ci.nsMsgAuthMethod.passwordCleartext;
++
++    config.incoming.username = this.#username.value;
++    this.#username.setAttribute("aria-invalid", !this.#username.value);
++
++    // Carbonio sends mail through its own native API, not SMTP: mirror the
++    // incoming settings onto the outgoing config so nothing downstream ends
++    // up with an empty/invalid outgoing server.
++    config.outgoing = config.incoming;
++
++    return config;
++  }
++
++  #configChanged() {
++    this.#edited = true;
++    this.#checkFormValidity();
++  }
++
++  #checkFormValidity() {
++    let completed = false;
++    try {
++      completed =
++        !!this.getCarbonioUserConfig().incoming.hostname &&
++        this.#form.checkValidity();
++    } catch (error) {
++      // Just fetching config values here; fail silently.
++    }
++
++    this.dispatchEvent(
++      new CustomEvent("config-updated", {
++        bubbles: true,
++        detail: { completed },
++      })
++    );
++  }
++}
++
++customElements.define("email-carbonio-settings", EmailCarbonioSettings);
+diff --git a/mail/components/accountcreation/content/widgets/email-manual-incoming-form.mjs b/mail/components/accountcreation/content/widgets/email-manual-incoming-form.mjs
+--- a/mail/components/accountcreation/content/widgets/email-manual-incoming-form.mjs
++++ b/mail/components/accountcreation/content/widgets/email-manual-incoming-form.mjs
+@@ -147,7 +147,9 @@ class EmailIncomingForm extends AccountH
+     });
+ 
+     this.#incomingProtocol.addEventListener("change", () => {
+-      this.#updateConfigInputsVisibility(this.#incomingProtocol.value >= 4);
++      this.#updateConfigInputsVisibility(
++        ["3", "4", "5"].includes(this.#incomingProtocol.value)
++      );
+       this.#configChanged();
+       this.#adjustPortToSSLAndProtocol();
+       this.#adjustOAuth2Visibility();
+@@ -418,6 +420,7 @@ class EmailIncomingForm extends AccountH
+         3: "exchange",
+         4: "ews",
+         5: "graph",
++        6: "carbonio",
+         0: null,
+       }
+     );
+@@ -460,7 +463,7 @@ class EmailIncomingForm extends AccountH
+ 
+     this.#incomingProtocol.value = InputSanitizer.translate(
+       config.incoming.type,
+-      { imap: 1, pop3: 2, exchange: 3, ews: 4, graph: 5 },
++      { imap: 1, pop3: 2, exchange: 3, ews: 4, graph: 5, carbonio: 6 },
+       1
+     );
+     this.#incomingHostname.value = config.incoming.hostname;
+diff --git a/mail/components/accountcreation/jar.mn b/mail/components/accountcreation/jar.mn
+--- a/mail/components/accountcreation/jar.mn
++++ b/mail/components/accountcreation/jar.mn
+@@ -24,6 +24,7 @@ messenger.jar:
+   content/messenger/accountcreation/content/widgets/email-manual-incoming-form.mjs        (content/widgets/email-manual-incoming-form.mjs)
+   content/messenger/accountcreation/content/widgets/email-manual-outgoing-form.mjs        (content/widgets/email-manual-outgoing-form.mjs)
+   content/messenger/accountcreation/content/widgets/email-exchange-settings.mjs           (content/widgets/email-exchange-settings.mjs)
++  content/messenger/accountcreation/content/widgets/email-carbonio-settings.mjs           (content/widgets/email-carbonio-settings.mjs)
+   content/messenger/accountcreation/content/widgets/email-config-found.mjs                (content/widgets/email-config-found.mjs)
+   content/messenger/accountcreation/content/widgets/email-password-form.mjs               (content/widgets/email-password-form.mjs)
+   content/messenger/accountcreation/content/widgets/email-sync-accounts-form.mjs          (content/widgets/email-sync-accounts-form.mjs)
+diff --git a/mail/components/accountcreation/templates/accountHubEmailCarbonioSettingsTemplate.inc.xhtml b/mail/components/accountcreation/templates/accountHubEmailCarbonioSettingsTemplate.inc.xhtml
+new file mode 100644
+--- /dev/null
++++ b/mail/components/accountcreation/templates/accountHubEmailCarbonioSettingsTemplate.inc.xhtml
+@@ -0,0 +1,90 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++<html:template id="accountHubEmailCarbonioSettingsTemplate" xmlns="http://www.w3.org/1999/xhtml">
++  <form id="carbonioSettingsForm" class="account-hub-form" slot="content">
++    <div class="hub-body manual-form-body">
++      <div class="form-row">
++        <div class="expanded">
++          <label for="carbonioHostname"
++                 data-l10n-id="account-hub-result-hostname-label"
++                 class="option-label">
++          </label>
++          <div class="input-control">
++            <input id="carbonioHostname"
++                   type="text"
++                   placeholder="mail.example.com"
++                   required="required"
++                   class="input-field manual-input"
++                   aria-invalid="false" />
++            <span id="carbonioHostnameErrorMessage"
++                  class="input-error-message"
++                  data-l10n-id="account-hub-hostname-error-text">
++            </span>
++          </div>
++        </div>
++      </div>
++      <div class="form-row">
++        <div>
++          <label for="carbonioPort"
++                 data-l10n-id="account-hub-on-port-label"
++                 class="option-label">
++          </label>
++          <div class="input-control">
++            <input id="carbonioPort"
++                   type="number"
++                   min="1"
++                   max="65535"
++                   placeholder="443"
++                   required="required"
++                   class="input-field number-input"
++                   aria-invalid="false" />
++            <span id="carbonioPortErrorMessage"
++                  class="input-error-message"
++                  data-l10n-id="account-hub-port-error-text">
++            </span>
++          </div>
++        </div>
++        <div class="expanded">
++          <account-hub-select id="carbonioConnectionSecurity"
++                  l10n-label-id="account-hub-ssl-label"
++                  l10n-error-id="account-hub-select-security-warning"
++                  flex="1">
++              <option id="carbonioConnectionSecurityNoEncryption"
++                      data-l10n-id="account-hub-ssl-noencryption-option"
++                      value="0"></option>
++              <option id="carbonioConnectionSecurityStartTls"
++                      label="STARTTLS"
++                      value="2"></option>
++              <option id="carbonioConnectionSecuritySslTls"
++                      selected="true"
++                      label="SSL/TLS"
++                      value="3"></option>
++          </account-hub-select>
++        </div>
++      </div>
++      <div class="form-row responsive-row">
++        <div class="expanded">
++          <label for="carbonioUsername"
++                 data-l10n-id="account-hub-result-username-label"
++                 class="option-label">
++          </label>
++          <div class="input-control">
++            <input id="carbonioUsername"
++                   type="text"
++                   data-l10n-id="account-hub-email-input"
++                   required="required"
++                   class="username input-field manual-input"
++                   aria-invalid="false" />
++            <span id="carbonioUsernameErrorMessage"
++                  class="input-error-message"
++                  data-l10n-id="account-hub-username-error-text">
++            </span>
++          </div>
++        </div>
++      </div>
++    </div>
++    <button type="submit" hidden="hidden"></button>
++  </form>
++</html:template>
+diff --git a/mail/components/accountcreation/templates/accountHubEmailIncomingFormTemplate.inc.xhtml b/mail/components/accountcreation/templates/accountHubEmailIncomingFormTemplate.inc.xhtml
+--- a/mail/components/accountcreation/templates/accountHubEmailIncomingFormTemplate.inc.xhtml
++++ b/mail/components/accountcreation/templates/accountHubEmailIncomingFormTemplate.inc.xhtml
+@@ -21,6 +21,8 @@
+                       value="4">EWS</option>
+               <option id="incomingProtocolGraph"
+                       value="5" >Graph</option>
++              <option id="incomingProtocolCarbonio"
++                      value="6">Carbonio</option>
+           </account-hub-select>
+         </div>
+         <div id="incomingHostnameFormGroup" class="expanded">
+diff --git a/mail/components/accountcreation/templates/accountHubEmailProtocolSelectFormTemplate.inc.xhtml b/mail/components/accountcreation/templates/accountHubEmailProtocolSelectFormTemplate.inc.xhtml
+--- a/mail/components/accountcreation/templates/accountHubEmailProtocolSelectFormTemplate.inc.xhtml
++++ b/mail/components/accountcreation/templates/accountHubEmailProtocolSelectFormTemplate.inc.xhtml
+@@ -68,6 +68,24 @@
+             </span>
+           </span>
+         </label>
++        <label class="account-hub-protocol-select-card">
++          <input type="radio" name="protocol-select" value="carbonio" />
++          <span class="account-hub-protocol-select-card-content">
++            <span class="account-hub-protocol-select-card-badge"></span>
++            <span class="account-hub-protocol-select-card-header">
++              <img
++                class="account-hub-protocol-select-card-icon"
++                src="chrome://messenger/skin/icons/new/normal/mail.svg"
++                alt=""
++              />
++              <span>Carbonio</span>
++            </span>
++            <span
++              class="account-hub-protocol-select-card-body"
++              data-l10n-id="account-hub-protocol-carbonio">
++            </span>
++          </span>
++        </label>
+       </fieldset>
+     </div>
+     <button type="submit" hidden="hidden"></button>
+diff --git a/mail/components/accountcreation/templates/accountHubTemplate.inc.xhtml b/mail/components/accountcreation/templates/accountHubTemplate.inc.xhtml
+--- a/mail/components/accountcreation/templates/accountHubTemplate.inc.xhtml
++++ b/mail/components/accountcreation/templates/accountHubTemplate.inc.xhtml
+@@ -18,6 +18,7 @@
+ #include ./accountHubEmailAddedSuccessTemplate.inc.xhtml
+ #include ./accountHubEmailAuthenticationFormTemplate.inc.xhtml
+ #include ./accountHubEmailAutoFormTemplate.inc.xhtml
++#include ./accountHubEmailCarbonioSettingsTemplate.inc.xhtml
+ #include ./accountHubEmailConfigFoundTemplate.inc.xhtml
+ #include ./accountHubEmailCredentialsConfirmationTemplate.inc.xhtml
+ #include ./accountHubEmailExchangeSettingsTemplate.inc.xhtml
+@@ -147,6 +148,12 @@
+     title-id="account-hub-email-exchange-settings"
+     hidden="hidden"
+   ></email-exchange-settings>
++  <email-carbonio-settings
++    id="emailCarbonioSettingsSubview"
++    class="account-hub-step"
++    title-id="account-hub-email-carbonio-settings"
++    hidden="hidden"
++  ></email-carbonio-settings>
+   <email-exchange-type
+     id="emailExchangeTypeSubview"
+     title-id="account-hub-exchange-type-title"
+diff --git a/mail/components/accountcreation/views/email.mjs b/mail/components/accountcreation/views/email.mjs
+--- a/mail/components/accountcreation/views/email.mjs
++++ b/mail/components/accountcreation/views/email.mjs
+@@ -133,6 +133,13 @@ class AccountHubEmail extends HTMLElemen
+    */
+   #exchangeSettingsSubview;
+ 
++  /**
++   * Carbonio settings subview.
++   *
++   * @type {HTMLElement}
++   */
++  #carbonioSettingsSubview;
++
+   // TODO: Clean up excess global variables and use IDs in state instead.
+ 
+   /**
+@@ -291,6 +298,16 @@ class AccountHubEmail extends HTMLElemen
+       subview: {},
+       templateId: "email-exchange-settings",
+     },
++    carbonioSettingsSubview: {
++      id: "emailCarbonioSettingsSubview",
++      nextStep: "emailPasswordSubview",
++      previousStep: "protocolSelectSubview",
++      forwardEnabled: true,
++      customActionFluentID: "",
++      customForwardFluentID: "account-hub-email-connect-button",
++      subview: {},
++      templateId: "email-carbonio-settings",
++    },
+     exchangeTypeSubview: {
+       id: "emailExchangeTypeSubview",
+       nextStep: "emailPasswordSubview",
+@@ -410,6 +427,12 @@ class AccountHubEmail extends HTMLElemen
+     this.#states.exchangeSettingsSubview.subview =
+       this.#exchangeSettingsSubview;
+ 
++    this.#carbonioSettingsSubview = this.querySelector(
++      "#emailCarbonioSettingsSubview"
++    );
++    this.#states.carbonioSettingsSubview.subview =
++      this.#carbonioSettingsSubview;
++
+     this.#states.exchangeTypeSubview.subview = this.querySelector(
+       "#emailExchangeTypeSubview"
+     );
+@@ -439,6 +462,7 @@ class AccountHubEmail extends HTMLElemen
+     this.#emailConfigFoundSubview.addEventListener("config-updated", this);
+     this.#emailConfigFoundSubview.addEventListener("install-addon", this);
+     this.#exchangeSettingsSubview.addEventListener("config-updated", this);
++    this.#carbonioSettingsSubview.addEventListener("config-updated", this);
+     this.#emailIncomingConfigSubview.addEventListener("advanced-config", this);
+     this.#emailOutgoingConfigSubview.addEventListener("advanced-config", this);
+     this.#states.emailAutodiscoverAuthenticationSubview.subview.addEventListener(
+@@ -966,6 +990,9 @@ class AccountHubEmail extends HTMLElemen
+       case "exchangeSettingsSubview":
+         this.#setCurrentConfigForSubview();
+         break;
++      case "carbonioSettingsSubview":
++        this.#setCurrentConfigForSubview();
++        break;
+       case "emailAutoconfigPasswordSubview":
+       case "emailPasswordSubview":
+         break;
+@@ -1264,6 +1291,11 @@ class AccountHubEmail extends HTMLElemen
+         await this.#initUI(this.#states[this.#currentState].nextStep);
+         this.#setCurrentConfigForSubview();
+         break;
++      case "carbonioSettingsSubview":
++        this.#currentConfig = stateData.config;
++        await this.#initUI(this.#states[this.#currentState].nextStep);
++        this.#setCurrentConfigForSubview();
++        break;
+       case "emailPasswordSubview":
+         // Get password and remember from the state and apply it to the config.
+         this.#currentConfig = this.#fillAccountConfig(
+@@ -1463,10 +1495,13 @@ class AccountHubEmail extends HTMLElemen
+       case "microsoft":
+         await this.#initUI("exchangeSettingsSubview");
+         break;
++      case "carbonio":
++        await this.#initUI("carbonioSettingsSubview");
++        break;
+       default:
+         throw new Error(`Invalid protocol [${protocol}] used.`);
+     }
+-
++
+     this.#states[this.#currentState].previousStep = previousStep;
+     const config = this.#currentConfig.copy();
+     if (clearHostnames && ["imap", "pop3"].includes(protocol)) {
+diff --git a/mail/locales/en-US/messenger/accountcreation/accountHub.ftl b/mail/locales/en-US/messenger/accountcreation/accountHub.ftl
+--- a/mail/locales/en-US/messenger/accountcreation/accountHub.ftl
++++ b/mail/locales/en-US/messenger/accountcreation/accountHub.ftl
+@@ -588,6 +588,10 @@ account-hub-protocol-microsoft = Exchang
+ 
+ account-hub-protocol-pop3 = Download to device
+ 
++account-hub-protocol-carbonio = Connect to your organization's Zextras Carbonio server
++
++account-hub-email-carbonio-settings = Connect to Carbonio
++
+ account-hub-oauth-unsupported-title = Additional configuration is required
+ 
+ # Note: 'Advanced configuration' is the text of the link/button at the bottom of the form (e.g., account-hub-exchange-type-advanced-config)
