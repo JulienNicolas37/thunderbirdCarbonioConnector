@@ -1,64 +1,37 @@
-# Purpose: fixes account creation failing at the password step with
-# "0x80070057 (NS_ERROR_ILLEGAL_VALUE) [nsIMsgIncomingServer.verifyLogon]",
-# discovered while testing add-carbonio-dedicated-account-wizard-screen.patch.
+# Purpose: fixes account creation failing with
+# NS_ERROR_ILLEGAL_VALUE at verifyLogon, and a follow-up
+# "No outgoing server: inconsistent flags" error.
 #
-# Root cause: the account-wizard's dedicated Carbonio screen only ever
-# collects hostname/port/socketType/username - it never had a way to
-# populate the "carbonio_url" server preference that
-# CarbonioIncomingServer::GetProtocolClient() reads to build the Carbonio
-# client (see CarbonioIncomingServer.cpp, GetCarbonioUrl/Initialize - the
-# endpoint is passed through as-is, with no path/scheme construction on the
-# C++ or Rust side; carbonio_xpcom's soap.rs documents the expected format
-# as the full SOAP endpoint, e.g. https://<host>/service/soap, confirmed
-# empirically - see the phase 1 spec doc).
+# Adds carbonio_url construction (AccountConfig.buildCarbonioEndpointURL(),
+# called from ConfigVerifier.sys.mjs and CreateInBackend.sys.mjs) and
+# AccountConfig.isCarbonioConfig(), used by configureOutgoingFromIncoming()
+# so Carbonio is treated as a single-endpoint protocol like Exchange.
 #
-# Without "carbonio_url" ever being set, CarbonioClient::new() receives an
-# empty/missing endpoint, which fails URL parsing - surfacing at
-# verifyLogon() as NS_ERROR_ILLEGAL_VALUE, since that's the first place in
-# the account-creation flow that actually exercises the client
-# (verifyConfig() -> verifyLogon() -> GetProtocolClient() -> Initialize()).
-#
-# Two *separate* files independently set this kind of protocol-specific
-# server preference before calling verifyLogon() / finishing account
-# creation - CreateInBackend.sys.mjs (used on successful non-interactive
-# creation) and ConfigVerifier.sys.mjs (used during the live verifyLogon()
-# check itself, in the account-wizard flow this connector actually goes
-# through). Both had the same owa_url/ews_url/eas_url pattern and both
-# were missing a carbonio_url equivalent - fixing only one would have left
-# the other broken depending on the exact path taken.
-#
-# Rather than duplicating the endpoint-construction logic in both files,
-# it's added once as AccountConfig.prototype.buildCarbonioEndpointURL(),
-# alongside the existing isExchangeConfig() - both files already import
-# AccountConfig, so this avoids a third copy of the same string-building
-# logic existing anywhere a future change (e.g. a different default port)
-# would need to keep in sync.
-#
-# Note on scheme selection: plain-HTTP support (when the user picks "No
-# encryption" for connection security) is only confirmed to work against
-# the local test harness (CarbonioServer, used in xpcshell tests), not
-# against a real deployment - see docs/limitations-connues.md. Kept here
-# so that form choice has an actual effect rather than being silently
-# ignored, but flagged as an assumption, not a validated fact.
-#
-# Full context: docs/limitations-connues.md, section "Compte et création".
-# Supplements add-carbonio-dedicated-account-wizard-screen.patch (this fix
-# was found while testing that patch) - apply both.
+# Full writeup: docs/patches.md.
 #
 # Applies to: comm-central checkout (a separate nested Mercurial repo under
 # mozilla-central's comm/ directory)
 # Apply with (from inside the comm/ checkout):
-#   hg import --no-commit patches/add-carbonio-endpoint-url-construction.patch
+#   hg import --no-commit patches/006-add-carbonio-endpoint-url-construction.patch
 # or:
-#   patch -p1 < patches/add-carbonio-endpoint-url-construction.patch
+#   patch -p1 < patches/006-add-carbonio-endpoint-url-construction.patch
 
 diff --git a/mail/components/accountcreation/modules/AccountConfig.sys.mjs b/mail/components/accountcreation/modules/AccountConfig.sys.mjs
 --- a/mail/components/accountcreation/modules/AccountConfig.sys.mjs
 +++ b/mail/components/accountcreation/modules/AccountConfig.sys.mjs
-@@ -479,6 +479,32 @@ AccountConfig.prototype = {
+@@ -479,6 +479,41 @@ AccountConfig.prototype = {
    },
  
    /**
++   * Return true if the configuration is for a Carbonio server.
++   *
++   * @returns {boolean}
++   */
++  isCarbonioConfig() {
++    return this.incoming.type == "carbonio";
++  },
++
++  /**
 +   * Build the full Carbonio SOAP endpoint URL from this config's incoming
 +   * hostname/port/socketType, e.g. `https://mail.example.com:443/service/soap`.
 +   * Confirmed empirically that Carbonio expects the full endpoint including
@@ -88,6 +61,20 @@ diff --git a/mail/components/accountcreation/modules/AccountConfig.sys.mjs b/mai
     * Return the host for the current configuration, or null if it is not configured.
     *
     * Note that this prefers the computed value from the configured URL for
+@@ -500,8 +535,11 @@ AccountConfig.prototype = {
+    * @returns {boolean}
+    */
+   configureOutgoingFromIncoming() {
+-    // For now this is true if, and only if, the server is an Exchange server.
+-    return this.isExchangeConfig();
++    // True for single-endpoint protocols where incoming and outgoing use the
++    // same server: Exchange (EWS/Graph), and Carbonio (its own native
++    // SOAP/REST API rather than SMTP - see docs/limitations-connues.md,
++    // "Hors périmètre phase 1").
++    return this.isExchangeConfig() || this.isCarbonioConfig();
+   },
+ };
+ 
 diff --git a/mail/components/accountcreation/modules/ConfigVerifier.sys.mjs b/mail/components/accountcreation/modules/ConfigVerifier.sys.mjs
 --- a/mail/components/accountcreation/modules/ConfigVerifier.sys.mjs
 +++ b/mail/components/accountcreation/modules/ConfigVerifier.sys.mjs
@@ -95,7 +82,7 @@ diff --git a/mail/components/accountcreation/modules/ConfigVerifier.sys.mjs b/ma
          if (config.incoming.easURL) {
            this.server.setStringValue("eas_url", config.incoming.easURL);
          }
-+        if (config.incoming.type == "carbonio") {
++        if (config.isCarbonioConfig()) {
 +          this.server.setStringValue(
 +            "carbonio_url",
 +            config.buildCarbonioEndpointURL()
@@ -111,7 +98,7 @@ diff --git a/mail/components/accountcreation/modules/CreateInBackend.sys.mjs b/m
    if (config.incoming.easURL) {
      inServer.setStringValue("eas_url", config.incoming.easURL);
    }
-+  if (config.incoming.type == "carbonio") {
++  if (config.isCarbonioConfig()) {
 +    inServer.setStringValue(
 +      "carbonio_url",
 +      config.buildCarbonioEndpointURL()
