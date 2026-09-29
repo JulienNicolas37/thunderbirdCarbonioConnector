@@ -1,0 +1,6 @@
+[carbonio]
+host = srv-carbonio-test.example.com
+user = user@example.com
+password = SuperSecretPassword
+insecure = true
+log_file = carbonio_explorer.log

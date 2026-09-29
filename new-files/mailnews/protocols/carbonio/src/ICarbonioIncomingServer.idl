@@ -1,0 +1,57 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsISupports.idl"
+
+interface ICarbonioClient;
+interface ICarbonioSimpleOperationListener;
+interface nsIMsgWindow;
+
+/**
+ * ICarbonioIncomingServer works around the same limitation as
+ * `IExchangeIncomingServer`: folders need a client object to talk to the
+ * server, but don't have access to the account-level details (endpoint URL,
+ * credentials) needed to create one - those live on the incoming server.
+ * Since folders are created through the folder lookup service, they can't
+ * hold a direct handle to their server, hence going through XPCOM.
+ *
+ * Trimmed relative to `IExchangeIncomingServer`: no OAuth-related attributes
+ * (Carbonio phase 1 auth is username/password, handled by
+ * `nsIMsgIncomingServer`'s built-in credential storage - no per-account
+ * override details needed), no delete model (phase 1 doesn't implement
+ * message deletion).
+ */
+[scriptable, uuid(9c2e5a7f-3d1b-4e6a-8f9c-2a4d6e8b1c33)]
+interface ICarbonioIncomingServer : nsISupports
+{
+  /**
+   * Whether the protocol client is currently running. False if no protocol
+   * client has been initialized yet (via `getProtocolClient()`), or once a
+   * shutting-down client has fully stopped.
+   */
+  readonly attribute boolean protocolClientRunning;
+
+  /**
+   * Whether the protocol client is currently idle (fully waiting for new
+   * operations). Always false if `protocolClientRunning` is false.
+   */
+  readonly attribute boolean protocolClientIdle;
+
+  /**
+   * Gets the client for interacting with the Carbonio server, creating a new
+   * one if one hasn't already been created.
+   */
+  ICarbonioClient getProtocolClient();
+
+  /** The full URL to the server's SOAP endpoint. */
+  attribute AUTF8String carbonioUrl;
+
+  /**
+   * Performs a sync for the full folder hierarchy.
+   *
+   * @param listener - Notified when the sync operation has completed.
+   * @param window - Window context (if available) for status updates.
+   */
+  void syncFolderHierarchy(in ICarbonioSimpleOperationListener listener, in nsIMsgWindow window);
+};

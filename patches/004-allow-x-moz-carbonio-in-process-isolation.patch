@@ -1,0 +1,45 @@
+# Purpose: fixes the message-open infinite loop (NS_ERROR_DOCUMENT_LOAD_LISTENER_NO_PARENT_CHANNEL).
+#
+# This is the actual, primary fix. The earlier patch in this same folder
+# (allow-x-moz-carbonio-in-parent-process.patch, on nsDocShell.cpp) touches a
+# related but different guard that only applies to the reverse transition
+# (a content-process load returning to the parent process) and was not
+# sufficient on its own - it did not stop the loop.
+#
+# dom/ipc/ProcessIsolation.cpp's IsolationBehaviorForURI() is what actually
+# decides, from the URI scheme alone, whether a load should be isolated into
+# a content process (IsolationBehavior::WebContent, the default fallthrough)
+# or stay in the parent process (IsolationBehavior::Parent). It hardcodes the
+# same kind of scheme allowlist as nsDocShell.cpp ("Protocols used by
+# Thunderbird to display email messages": imap, mailbox, news, nntp, snews,
+# x-moz-ews, x-moz-graph) - x-moz-carbonio is naturally missing from it, for
+# the same reason as before (third-party module).
+#
+# Because our scheme falls through to IsolationBehavior::WebContent here,
+# MaybeTriggerProcessSwitch() (netwerk/ipc/DocumentLoadListener.cpp) decides
+# a real process switch is needed for every Carbonio message load. That
+# switch then fails at TriggerRedirectToRealChannel(), which expects a
+# nsIParentChannel wrapper to have been registered for the switch - one that
+# is never created for a message-service-driven load - producing
+# NS_ERROR_DOCUMENT_LOAD_LISTENER_NO_PARENT_CHANNEL and the infinite
+# LoadMessage/AsyncOpen loop. EWS's x-moz-ews scheme is in this list, which is
+# why it never triggers a process switch at all.
+#
+# Full root-cause writeup: docs/mecanique-ouverture-message.md
+#
+# Applies to: mozilla-central checkout, dom/ipc/ProcessIsolation.cpp
+# Apply with: hg import --no-commit patches/allow-x-moz-carbonio-in-process-isolation.patch
+#         or: patch -p1 < patches/allow-x-moz-carbonio-in-process-isolation.patch
+
+diff --git a/dom/ipc/ProcessIsolation.cpp b/dom/ipc/ProcessIsolation.cpp
+--- a/dom/ipc/ProcessIsolation.cpp
++++ b/dom/ipc/ProcessIsolation.cpp
+@@ -354,7 +354,7 @@ static IsolationBehavior IsolationBehavi
+   // Protocols used by Thunderbird to display email messages.
+   if (scheme == "imap"_ns || scheme == "mailbox"_ns || scheme == "news"_ns ||
+       scheme == "nntp"_ns || scheme == "snews"_ns || scheme == "x-moz-ews"_ns ||
+-      scheme == "x-moz-graph"_ns) {
++      scheme == "x-moz-graph"_ns || scheme == "x-moz-carbonio"_ns) {
+     return IsolationBehavior::Parent;
+   }
+ 

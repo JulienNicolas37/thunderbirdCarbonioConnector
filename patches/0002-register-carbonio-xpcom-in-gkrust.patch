@@ -1,0 +1,10 @@
+--- a/rust/gkrust/src/lib.rs
++++ b/rust/gkrust/src/lib.rs
+@@ -5,6 +5,7 @@
+ // Add new crates to Cargo.toml and build them here to get into gkrust/libxul
+ extern crate gkrust_shared as _;
+ 
++extern crate carbonio_xpcom as _;
+ extern crate ews_xpcom as _;
+ extern crate graph_xpcom as _;
+ extern crate mailnews_string_glue as _;
